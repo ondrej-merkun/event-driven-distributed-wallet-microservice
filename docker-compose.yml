@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: wallet-postgres
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-wallet_db}
+      POSTGRES_USER: ${DATABASE_USER:-wallet_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-wallet_pass}
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-wallet_user} -d ${DATABASE_NAME:-wallet_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wallet-network
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: wallet-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wallet}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-wallet}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wallet-network
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: wallet-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wallet-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: wallet-api
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - wallet-network
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: wallet-worker
+    command: node dist/worker.js
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - wallet-network
+
+volumes:
+  postgres_data:
+
+networks:
+  wallet-network:
+    driver: bridge

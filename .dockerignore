@@ -1,0 +1,33 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+# Development/test files not needed in image
+.npm-cache
+.nvmrc
+test/
+docs/
+*.md
+!README.md
+
+# Docker files (prevent recursive context)
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# IDE/Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+test_output*.txt
+app.log

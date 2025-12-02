@@ -1,0 +1,25 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command: npm run test:all
+    env_file: .env
+    environment:
+      DATABASE_HOST: postgres
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_URL: amqp://wallet:wallet@rabbitmq:5672
+      REDIS_HOST: redis
+      SAGA_STUCK_THRESHOLD: 5000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - wallet-network
+
+
