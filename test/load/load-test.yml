@@ -1,0 +1,101 @@
+config:
+  target: "http://localhost:3000"
+  phases:
+    # Warm-up phase
+    - duration: 10
+      arrivalRate: 5
+      name: "Warm up"
+    
+    # Ramp up load
+    - duration: 30
+      arrivalRate: 10
+      rampTo: 50
+      name: "Ramp up load"
+    
+    # Sustained load
+    - duration: 60
+      arrivalRate: 50
+      name: "Sustained high load"
+    
+    # Spike test
+    - duration: 20
+      arrivalRate: 100
+      name: "Spike test"
+  
+  # Ensure test doesn't fail on timeouts
+  timeout: 10
+  
+  # Set think time between requests (milliseconds)
+  defaults:
+    headers:
+      Content-Type: "application/json"
+
+scenarios:
+  # Scenario 1: Deposit operations
+  - name: "Deposit Flow"
+    weight: 40
+    flow:
+      - post:
+          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
+          json:
+            amount: "{{ $randomNumber(10, 1000) }}"
+          headers:
+            x-request-id: "load-deposit-{{ $uuid() }}"
+          capture:
+            - json: "$.balance"
+              as: "balance"
+      - think: 1
+
+  # Scenario 2: Withdrawal operations
+  - name: "Withdrawal Flow"
+    weight: 30
+    flow:
+      - post:
+          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
+          json:
+            amount: 500
+          headers:
+            x-request-id: "load-deposit-{{ $uuid() }}"
+      - post:
+          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/withdraw"
+          json:
+            amount: "{{ $randomNumber(10, 100) }}"
+          headers:
+            x-request-id: "load-withdraw-{{ $uuid() }}"
+      - think: 1
+
+  # Scenario 3: Transfer operations
+  - name: "Transfer Flow"
+    weight: 20
+    flow:
+      - post:
+          url: "/wallet/sender-{{ $randomNumber(1, 500) }}/deposit"
+          json:
+            amount: 1000
+          headers:
+            x-request-id: "load-deposit-sender-{{ $uuid() }}"
+      - post:
+          url: "/wallet/sender-{{ $randomNumber(1, 500) }}/transfer"
+          json:
+            toWalletId: "receiver-{{ $randomNumber(1, 500) }}"
+            amount: "{{ $randomNumber(10, 100) }}"
+          headers:
+            x-request-id: "load-transfer-{{ $uuid() }}"
+      - think: 2
+
+  # Scenario 4: Read operations (balance checks)
+  - name: "Balance Check Flow"
+    weight: 10
+    flow:
+      - get:
+          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/balance"
+      - think: 0.5
+
+# Performance thresholds
+ensure:
+  # Response time
+  p95: 1000  # 95th percentile under 1 second
+  p99: 2000  # 99th percentile under 2 seconds
+  
+  # Error rate
+  maxErrorRate: 5  # Max 5% error rate
