@@ -7,6 +7,9 @@ import { IdempotencyKey } from './domain/entities/idempotency-key.entity';
 import { TransferSaga } from './modules/transfer/entities/transfer-saga.entity';
 import { FraudDetectionConsumer } from './modules/fraud/consumers/fraud-detection.consumer';
 import { AppConfigService } from './config/app-config.service';
+import { AppConfigModule } from './config/app-config.module';
+import { RedisModule } from './infrastructure/redis/redis.module';
+import { RabbitMQModule } from './infrastructure/messaging/rabbitmq.module';
 
 @Module({
   imports: [
@@ -14,8 +17,10 @@ import { AppConfigService } from './config/app-config.service';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    AppConfigModule,
+    RedisModule, // Required for REDIS_CLIENT
+    RabbitMQModule, // Required for RABBITMQ_CONNECTION
     TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
       useFactory: (configService: AppConfigService) => ({
         type: 'postgres',
         host: configService.databaseHost,
@@ -31,7 +36,6 @@ import { AppConfigService } from './config/app-config.service';
     }),
   ],
   providers: [
-    AppConfigService,
     FraudDetectionConsumer,
   ],
 })
