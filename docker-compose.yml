@@ -25,6 +25,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wallet}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-wallet}
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-wallet_cookie_secret}
     ports:
       - "${RABBITMQ_PORT:-5672}:5672"
       - "${RABBITMQ_UI_PORT:-15672}:15672"
