@@ -1,6 +1,5 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
-import { SharedArray } from 'k6/data';
+import { check } from 'k6';
 
 // Configuration
 const BASE_URL = __ENV.API_URL || 'http://host.docker.internal:3000';
@@ -63,7 +62,7 @@ export function concurrent_deposits() {
     },
   };
 
-  const res = http.post(`${BASE_URL}/wallet/user-${id}/deposit`, payload, params);
+  const res = http.post(`${BASE_URL}/v1/wallet/user-${id}/deposit`, payload, params);
   check(res, {
     'status is 200': (r) => r.status === 200,
   });
@@ -80,10 +79,10 @@ export function same_wallet_ops() {
   const params = { headers: { 'Content-Type': 'application/json' } };
 
   // Deposit
-  http.post(`${BASE_URL}/wallet/${walletId}/deposit`, JSON.stringify({ amount: 100 }), params);
+  http.post(`${BASE_URL}/v1/wallet/${walletId}/deposit`, JSON.stringify({ amount: 100 }), params);
 
   // Withdraw
-  const res = http.post(`${BASE_URL}/wallet/${walletId}/withdraw`, JSON.stringify({ amount: 10 }), params);
+  const res = http.post(`${BASE_URL}/v1/wallet/${walletId}/withdraw`, JSON.stringify({ amount: 10 }), params);
   
   check(res, {
     'status is 200': (r) => r.status === 200,
@@ -98,11 +97,11 @@ export function concurrent_transfers() {
   const params = { headers: { 'Content-Type': 'application/json' } };
 
   // Setup sender
-  http.post(`${BASE_URL}/wallet/${senderId}/deposit`, JSON.stringify({ amount: 1000 }), params);
+  http.post(`${BASE_URL}/v1/wallet/${senderId}/deposit`, JSON.stringify({ amount: 1000 }), params);
 
   // Transfer
   const payload = JSON.stringify({ toWalletId: receiverId, amount: 50 });
-  const res = http.post(`${BASE_URL}/wallet/${senderId}/transfer`, payload, params);
+  const res = http.post(`${BASE_URL}/v1/wallet/${senderId}/transfer`, payload, params);
 
   check(res, {
     'status is 200': (r) => r.status === 200,

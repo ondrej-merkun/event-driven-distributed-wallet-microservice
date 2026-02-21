@@ -6,6 +6,7 @@ import { WalletEvent } from './modules/wallet/entities/wallet-event.entity';
 import { IdempotencyKey } from './domain/entities/idempotency-key.entity';
 import { TransferSaga } from './modules/transfer/entities/transfer-saga.entity';
 import { FraudDetectionConsumer } from './modules/fraud/consumers/fraud-detection.consumer';
+import { FraudAlert } from './modules/fraud/entities/fraud-alert.entity';
 import { AppConfigService } from './config/app-config.service';
 import { AppConfigModule } from './config/app-config.module';
 import { RedisModule } from './infrastructure/redis/redis.module';
@@ -28,8 +29,8 @@ import { RabbitMQModule } from './infrastructure/messaging/rabbitmq.module';
         username: configService.databaseUser,
         password: configService.databasePassword,
         database: configService.databaseName,
-        entities: [Wallet, WalletEvent, IdempotencyKey, TransferSaga],
-        synchronize: true, // Auto-create tables (dev only)
+        entities: [Wallet, WalletEvent, IdempotencyKey, TransferSaga, FraudAlert],
+        synchronize: configService.nodeEnv !== 'production',
         subscribers: [],
       }),
       inject: [AppConfigService],

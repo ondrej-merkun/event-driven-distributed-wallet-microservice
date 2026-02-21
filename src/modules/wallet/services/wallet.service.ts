@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger, Inject, NotFoundException } from '@nestjs/common';
 import { IWalletRepository } from '../domain/interfaces/wallet.repository.interface';
 import { IdempotencyRepository } from '../../../infrastructure/repositories/idempotency.repository';
 import { Wallet } from '../entities/wallet.entity';
@@ -143,7 +143,7 @@ export class WalletService {
 
   /**
    * Set or update daily withdrawal limit.
-   * Emits DAILY_LIMIT_SET or DAILY_LIMIT_REMOVED event.
+   * Emits DAILY_WITHDRAWAL_LIMIT_SET or DAILY_WITHDRAWAL_LIMIT_REMOVED event.
    */
   async setDailyWithdrawalLimit(
     walletId: string,
@@ -152,20 +152,17 @@ export class WalletService {
     reason?: string,
   ): Promise<void> {
     await this.transactionManager.execute(async (ctx) => {
-      const wallet = await this.walletRepository.findById(walletId); // No lock needed for simple update? Or maybe yes?
-      // Actually, for consistency, we should probably lock or use optimistic locking.
-      // The original code didn't use explicit lock here, just saveWithEvent.
-      
+      const wallet = await this.walletRepository.findByIdWithLock(walletId, ctx.manager);
       if (!wallet) {
-        throw new Error(`Wallet ${walletId} not found`);
+        throw new NotFoundException(`Wallet ${walletId} not found`);
       }
 
       const previousLimit = wallet.dailyWithdrawalLimit;
       wallet.setDailyWithdrawalLimit(limit);
 
       const eventType = limit === null
-        ? WalletEventType.WALLET_UNFROZEN // Placeholder as per original code
-        : WalletEventType.WALLET_FROZEN; // Placeholder as per original code
+        ? WalletEventType.DAILY_WITHDRAWAL_LIMIT_REMOVED
+        : WalletEventType.DAILY_WITHDRAWAL_LIMIT_SET;
 
       await this.walletRepository.saveWithEvent(
         wallet,
@@ -204,9 +201,9 @@ export class WalletService {
     const { walletId, eventType, operation, metadata, logMessage } = params;
 
     await this.transactionManager.execute(async (ctx) => {
-      const wallet = await this.walletRepository.findById(walletId);
+      const wallet = await this.walletRepository.findByIdWithLock(walletId, ctx.manager);
       if (!wallet) {
-        throw new Error(`Wallet ${walletId} not found`);
+        throw new NotFoundException(`Wallet ${walletId} not found`);
       }
 
       operation(wallet);
@@ -264,7 +261,7 @@ export class WalletService {
         // Use findByIdWithLock for pessimistic locking during transaction
         wallet = await this.walletRepository.findByIdWithLock(walletId, ctx.manager);
         if (!wallet) {
-          throw new Error(`Wallet ${walletId} not found`);
+          throw new NotFoundException(`Wallet ${walletId} not found`);
         }
       }
       

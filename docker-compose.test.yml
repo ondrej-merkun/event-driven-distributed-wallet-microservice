@@ -8,7 +8,6 @@ services:
     env_file: .env
     environment:
       DATABASE_HOST: postgres
-      RABBITMQ_HOST: rabbitmq
       RABBITMQ_URL: amqp://wallet:wallet@rabbitmq:5672
       REDIS_HOST: redis
       SAGA_STUCK_THRESHOLD: 5000
@@ -21,5 +20,4 @@ services:
         condition: service_healthy
     networks:
       - wallet-network
-
 

@@ -41,7 +41,16 @@ export class AppConfigService {
 
   // RabbitMQ
   get rabbitMqUrl(): string {
-    return this.configService.getOrThrow('RABBITMQ_URL');
+    const explicitUrl = this.configService.get<string>('RABBITMQ_URL');
+    if (explicitUrl) {
+      return explicitUrl;
+    }
+
+    const user = this.configService.get<string>('RABBITMQ_USER') ?? 'wallet';
+    const pass = this.configService.get<string>('RABBITMQ_PASS') ?? 'wallet';
+    const host = this.configService.get<string>('RABBITMQ_HOST') ?? 'localhost';
+    const port = Number(this.configService.get<string>('RABBITMQ_PORT') ?? 5672);
+    return `amqp://${user}:${pass}@${host}:${port}`;
   }
 
   get rabbitMqExchange(): string {

@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { WalletService } from '../../wallet/services/wallet.service';
 
 import { WalletRepository } from '../../wallet/repositories/wallet.repository';
@@ -53,7 +53,7 @@ export class TransferSagaService {
     }
 
     if (fromWalletId === toWalletId) {
-      throw new Error('Cannot transfer to the same wallet');
+      throw new BadRequestException('Cannot transfer to the same wallet');
     }
 
     // Validate currency compatibility
