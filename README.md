@@ -50,7 +50,8 @@ A production-grade event-driven distributed wallet microservice built with NestJ
 
 **TransferModule**: Multi-wallet transfer orchestration
 - **Domain**: `TransferSaga` entity
-- **Services**: `TransferSagaService` (saga orchestration), `SagaRecoveryService`
+- **Services**: `TransferSagaService` (saga orchestration)
+- **Recovery**: `SagaRecoveryService` runs as an app-level background recovery task
 - **Pattern**: Saga orchestration with compensation
 
 **FraudModule**: Async fraud detection processing
@@ -60,7 +61,7 @@ A production-grade event-driven distributed wallet microservice built with NestJ
 
 **HealthModule**: Operational readiness
 - **Endpoints**: `/health`, `/health/live`, `/health/ready`
-- **Checks**: Database, RabbitMQ connectivity
+- **Checks**: Database connectivity
 
 **Infrastructure**: Cross-cutting concerns
 - **OutboxRelayService**: Reliable event publishing (Outbox pattern)
@@ -108,7 +109,7 @@ The API will be available at `http://localhost:3000`
 
 ## API Endpoints
 
-> **Note**: All endpoints are versioned with `/v1/` prefix. The Swagger documentation at `/api` provides interactive testing.
+> **Note**: Wallet API endpoints are versioned with `/v1/` prefix. The Swagger documentation at `/api` provides interactive testing.
 
 ### Deposit Funds
 ```bash
@@ -146,7 +147,7 @@ Response:
 
 ### Transfer Funds
 ```bash
-POST /wallet/:id/transfer
+POST /v1/wallet/:id/transfer
 Content-Type: application/json
 X-Request-ID: <unique-request-id>
 
@@ -167,7 +168,7 @@ Response:
 
 ### Get Wallet Balance
 ```bash
-GET /wallet/:id
+GET /v1/wallet/:id
 
 Response:
 {
@@ -178,7 +179,7 @@ Response:
 
 ### Get Transaction History
 ```bash
-GET /wallet/:id/history?limit=100&offset=0
+GET /v1/wallet/:id/history?limit=100&offset=0
 
 Response:
 [
@@ -211,15 +212,13 @@ Response:
 {
   "status": "ok",
   "info": {
-    "database": { "status": "up", "responseTime": 2 },
-    "rabbitmq": { "status": "up", "channel": "connected" }
+    "database": { "status": "up" }
   }
 }
 ```
 
 #### Rate Limiting
 - **Global Limit**: 100 requests per minute
-- **Withdrawal Limit**: 10 requests per minute
 - **Headers**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 - **Response**: 429 Too Many Requests
 
@@ -248,54 +247,54 @@ The API uses standard HTTP status codes and a consistent error format:
 
 ```bash
 # 1. Deposit to Alice's wallet
-curl -X POST http://localhost:3000/wallet/alice/deposit \
+curl -X POST http://localhost:3000/v1/wallet/alice/deposit \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: req-001" \
   -d '{"amount": 100}'
 
 # 2. Check Alice's balance
-curl http://localhost:3000/wallet/alice
+curl http://localhost:3000/v1/wallet/alice
 
 # 3. Transfer from Alice to Bob
-curl -X POST http://localhost:3000/wallet/alice/transfer \
+curl -X POST http://localhost:3000/v1/wallet/alice/transfer \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: req-002" \
   -d '{"toWalletId": "bob", "amount": 50}'
 
 # 4. Check both balances
-curl http://localhost:3000/wallet/alice
-curl http://localhost:3000/wallet/bob
+curl http://localhost:3000/v1/wallet/alice
+curl http://localhost:3000/v1/wallet/bob
 
 # 5. View transaction history
-curl http://localhost:3000/wallet/alice/history
+curl http://localhost:3000/v1/wallet/alice/history
 ```
 
 ### Idempotency Testing
 
 ```bash
 # First request
-curl -X POST http://localhost:3000/wallet/alice/deposit \
+curl -X POST http://localhost:3000/v1/wallet/alice/deposit \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: duplicate-test" \
   -d '{"amount": 100}'
 
 # Duplicate request (same X-Request-ID)
-curl -X POST http://localhost:3000/wallet/alice/deposit \
+curl -X POST http://localhost:3000/v1/wallet/alice/deposit \
   -H "Content-Type: application/json" \
   -H "X-Request-ID: duplicate-test" \
   -d '{"amount": 100}'
 
 # Balance should still be 100, not 200
-curl http://localhost:3000/wallet/alice
+curl http://localhost:3000/v1/wallet/alice
 ```
 
 ## Running Tests
 
-The project follows the **testing pyramid** with 96 tests across three levels:
-- **Unit Tests**: 39 tests (co-located with source code)
-- **Integration Tests**: 39 tests (7 test suites in `test/integration/`)
-- **E2E Tests**: 18 tests (2 test suites in `test/e2e/`)
-- **Stress Tests**: ~12 tests (optional, in `test/stress/`)
+The project follows a **testing pyramid** across four levels:
+- **Unit Tests**: Co-located with source code
+- **Integration Tests**: 8 suites in `test/integration/`
+- **E2E Tests**: 3 suites in `test/e2e/`
+- **Stress Tests**: Optional suites in `test/stress/`
 
 ### Unit Tests
 ```bash
@@ -340,9 +339,9 @@ npm run test:stress
 ### Run Tests in Docker
 ```bash
 # Build and run tests in Docker environment
-docker-compose -f docker-compose.test.yml up --build
+docker-compose -f docker-compose.yml -f docker-compose.test.yml up --build --abort-on-container-exit test
 
-# Run all tests in Docker (unit, integration, E2E)
+# Run only E2E tests in Docker
 docker-compose -f docker-compose.yml -f docker-compose.test.yml run test npm run test:e2e
 ```
 
@@ -358,8 +357,8 @@ npm install
 # Copy environment file
 cp .env.example .env
 
-# Start database and RabbitMQ with Docker Compose
-docker-compose up postgres rabbitmq
+# Start database, RabbitMQ, and Redis with Docker Compose
+docker-compose up postgres rabbitmq redis
 
 # Run database migrations (TypeORM will auto-sync in development)
 
@@ -381,35 +380,65 @@ npm start
 ```
 wallet-microservice/
 ├── src/
-│   ├── api/
-│   │   ├── controllers/     # REST API controllers
-│   │   └── dto/             # Data transfer objects
-│   ├── domain/
-│   │   ├── entities/        # TypeORM entities
-│   │   └── services/        # Business logic services
-│   ├── infrastructure/
-│   │   ├── database/        # Database configuration
-│   │   ├── messaging/       # RabbitMQ publisher & Outbox Relay
-│   │   ├── redis/           # Redis configuration
-│   │   └── repositories/    # Data access layer
-│   ├── workers/
-│   │   └── consumers/       # Background event consumers
-│   ├── app.module.ts        # Main application module
-│   ├── main.ts              # API entry point
-│   ├── worker.module.ts     # Worker module
-│   └── worker.ts            # Worker entry point
+│   ├── common/filters/               # Global exception filters
+│   ├── config/                       # Typed application configuration
+│   ├── domain/                       # Shared domain entities/exceptions
+│   │   ├── entities/
+│   │   └── exceptions/
+│   ├── health/                       # Health controller/module
+│   ├── infrastructure/               # DB, messaging, redis, repositories
+│   │   ├── database/
+│   │   │   └── migrations/           # SQL migrations for immutability/security
+│   │   ├── messaging/
+│   │   ├── redis/
+│   │   └── repositories/
+│   ├── modules/
+│   │   ├── wallet/                   # Wallet API + domain logic
+│   │   │   ├── controllers/
+│   │   │   ├── domain/interfaces/
+│   │   │   ├── dtos/
+│   │   │   ├── entities/
+│   │   │   ├── repositories/
+│   │   │   └── services/
+│   │   ├── transfer/                 # Saga orchestration
+│   │   │   ├── entities/
+│   │   │   ├── repositories/
+│   │   │   └── services/
+│   │   └── fraud/                    # Fraud detection consumer + entity
+│   │       ├── consumers/
+│   │       └── entities/
+│   ├── workers/                      # Worker-side services/contracts
+│   │   ├── consumers/
+│   │   └── saga-recovery.service.ts
+│   ├── app.module.ts                 # API app module
+│   ├── main.ts                       # API entry point
+│   ├── worker.module.ts              # Worker module
+│   └── worker.ts                     # Worker entry point
 ├── test/
-│   ├── wallet.e2e-spec.ts   # E2E tests
-│   └── load-test.js         # Load testing script
-├── docker-compose.yml       # Docker Compose configuration
-├── Dockerfile               # Multi-stage build
-├── README.md                # This file
-└── DESIGN.md                # Architecture decisions
+│   ├── e2e/                          # End-to-end test suites
+│   ├── integration/                  # Integration test suites
+│   ├── stress/                       # Stress/chaos tests
+│   ├── load/                         # Artillery scenario files
+│   ├── shared/                       # Shared test bootstrap utilities
+│   ├── load-test.k6.js               # k6 load test script
+│   ├── setup.ts                      # Global test setup
+│   └── jest-*.json                   # Jest test configs
+├── docs/
+│   ├── DESIGN.md                     # Architecture decisions and trade-offs
+│   ├── EVENT_IMMUTABILITY.md         # Immutability/audit implementation
+│   ├── PRODUCTION_READINESS.md       # Production deployment/security guidance
+│   └── TESTING.md                    # Testing strategy
+├── docker-compose.yml                # Main local environment
+├── docker-compose.test.yml           # Test runner service overlay
+├── Dockerfile                        # Multi-stage image build
+├── init-db.sql                       # DB bootstrap SQL
+├── package.json                      # Scripts/dependencies
+└── README.md                         # Project guide
 ```
 
 ## Key Design Decisions
 
-See [DESIGN.md](./DESIGN.md) for detailed architecture decisions and trade-offs.
+See [docs/DESIGN.md](./docs/DESIGN.md) for detailed architecture decisions and trade-offs.
 
 Key highlights:
 - **Event Sourcing**: All wallet operations are recorded as immutable events
@@ -478,7 +507,7 @@ For production deployment, consider:
 9. **Event Cleanup**: Add job to archive old idempotency keys
 10. **Dead Letter Queue**: Implement DLQ processing and alerting
 
-See [docs/PRODUCTION_DEPLOYMENT.md](./docs/PRODUCTION_DEPLOYMENT.md) for complete production deployment guide including:
+See [docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md) for complete production deployment guide including:
 - Database security configuration
 - Audit compliance setup
 - Monitoring and alerting
@@ -492,6 +521,6 @@ This implementation includes multiple layers of event immutability enforcement:
 
 For audit compliance (SOX, PCI-DSS, GDPR), see:
 - [docs/EVENT_IMMUTABILITY.md](./docs/EVENT_IMMUTABILITY.md) - Complete immutability explanation
-- [docs/PRODUCTION_DEPLOYMENT.md](./docs/PRODUCTION_DEPLOYMENT.md) - Production security setup
+- [docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md) - Production security setup
 
 ## License
