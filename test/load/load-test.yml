@@ -36,7 +36,7 @@ scenarios:
     weight: 40
     flow:
       - post:
-          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
+          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
           json:
             amount: "{{ $randomNumber(10, 1000) }}"
           headers:
@@ -51,13 +51,13 @@ scenarios:
     weight: 30
     flow:
       - post:
-          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
+          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
           json:
             amount: 500
           headers:
             x-request-id: "load-deposit-{{ $uuid() }}"
       - post:
-          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/withdraw"
+          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/withdraw"
           json:
             amount: "{{ $randomNumber(10, 100) }}"
           headers:
@@ -69,13 +69,13 @@ scenarios:
     weight: 20
     flow:
       - post:
-          url: "/wallet/sender-{{ $randomNumber(1, 500) }}/deposit"
+          url: "/v1/wallet/sender-{{ $randomNumber(1, 500) }}/deposit"
           json:
             amount: 1000
           headers:
             x-request-id: "load-deposit-sender-{{ $uuid() }}"
       - post:
-          url: "/wallet/sender-{{ $randomNumber(1, 500) }}/transfer"
+          url: "/v1/wallet/sender-{{ $randomNumber(1, 500) }}/transfer"
           json:
             toWalletId: "receiver-{{ $randomNumber(1, 500) }}"
             amount: "{{ $randomNumber(10, 100) }}"
@@ -88,7 +88,7 @@ scenarios:
     weight: 10
     flow:
       - get:
-          url: "/wallet/user-{{ $randomNumber(1, 1000) }}/balance"
+          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}"
       - think: 0.5
 
 # Performance thresholds

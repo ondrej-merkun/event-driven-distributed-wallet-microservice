@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  VERSION_NEUTRAL,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -22,7 +23,7 @@ import { TransferSagaService } from '../../transfer/services/transfer-saga.servi
 import { DepositDto, WithdrawDto, TransferDto, GetHistoryDto } from '../dtos/wallet.dto';
 
 @ApiTags('wallet')
-@Controller({ path: 'wallet', version: '1' })
+@Controller({ path: 'wallet', version: ['1', VERSION_NEUTRAL] })
 export class WalletController {
   private readonly logger = new Logger(WalletController.name);
 

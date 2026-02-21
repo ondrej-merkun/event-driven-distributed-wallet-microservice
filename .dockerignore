@@ -9,10 +9,9 @@ coverage
 .DS_Store
 *.log
 
-# Development/test files not needed in image
+# Development files not needed in image
 .npm-cache
 .nvmrc
-test/
 docs/
 *.md
 !README.md

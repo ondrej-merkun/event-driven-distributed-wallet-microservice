@@ -39,7 +39,7 @@ import { APP_GUARD } from '@nestjs/core';
       useFactory: (configService: AppConfigService) => ({
         type: 'postgres',
         entities: [Wallet, WalletEvent, IdempotencyKey, TransferSaga, FraudAlert, OutboxEvent],
-        synchronize: true, // Auto-create tables (dev only)
+        synchronize: configService.nodeEnv !== 'production',
         subscribers: [WalletEventSubscriber],
         // Configure replication if read host is provided
         ...(configService.databaseReadHost ? {
@@ -80,7 +80,6 @@ import { APP_GUARD } from '@nestjs/core';
     WalletModule,
     TransferModule,
     FraudModule,
-    AppConfigModule,
     RedisModule,
     HealthModule,
     DatabaseModule,

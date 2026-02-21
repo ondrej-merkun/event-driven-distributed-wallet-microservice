@@ -3,10 +3,6 @@
   "rootDir": ".",
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
-  "testPathIgnorePatterns": [
-    "reliability.e2e-spec.ts",
-    "advanced-concurrency.e2e-spec.ts"
-  ],
   "transform": {
     "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "test/tsconfig.json" }]
   },

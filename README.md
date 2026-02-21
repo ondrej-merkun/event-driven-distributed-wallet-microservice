@@ -60,7 +60,7 @@ A production-grade event-driven distributed wallet microservice built with NestJ
 - **Pattern**: At-least-once processing with idempotency
 
 **HealthModule**: Operational readiness
-- **Endpoints**: `/health`, `/health/live`, `/health/ready`
+- **Endpoints**: `/v1/health`, `/v1/health/live`, `/v1/health/ready`
 - **Checks**: Database connectivity
 
 **Infrastructure**: Cross-cutting concerns
@@ -203,9 +203,9 @@ Response:
 ### Operational Endpoints & Behaviors
 
 #### Health Monitoring
-- `GET /health`: Overall health (200 OK or 503 Service Unavailable)
-- `GET /health/live`: Kubernetes liveness probe
-- `GET /health/ready`: Kubernetes readiness probe
+- `GET /v1/health`: Overall health (200 OK or 503 Service Unavailable)
+- `GET /v1/health/live`: Kubernetes liveness probe
+- `GET /v1/health/ready`: Kubernetes readiness probe
 
 **Sample Response**:
 ```json

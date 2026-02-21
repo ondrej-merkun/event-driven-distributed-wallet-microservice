@@ -60,9 +60,11 @@ services:
       - "${PORT:-3000}:3000"
     env_file: .env
     environment:
-      NODE_ENV: production
+      # Local compose should bootstrap schema automatically via TypeORM sync.
+      # Override with NODE_ENV=production explicitly when testing prod-like behavior.
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_HOST: postgres
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-wallet}:${RABBITMQ_PASS:-wallet}@rabbitmq:5672
       REDIS_HOST: redis
     depends_on:
       postgres:
@@ -84,9 +86,10 @@ services:
     command: node dist/worker.js
     env_file: .env
     environment:
-      NODE_ENV: production
+      # Keep worker in same mode as API to avoid schema/config drift in local runs.
+      NODE_ENV: ${NODE_ENV:-development}
       DATABASE_HOST: postgres
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-wallet}:${RABBITMQ_PASS:-wallet}@rabbitmq:5672
       REDIS_HOST: redis
     depends_on:
       postgres:
