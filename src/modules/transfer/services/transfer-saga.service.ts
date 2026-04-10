@@ -72,60 +72,20 @@ export class TransferSagaService {
       );
     }
 
-    // Create saga with currency from sender wallet
-    const saga = new TransferSaga(fromWalletId, toWalletId, amount, fromWallet.currency);
-    await this.sagaRepository.save(saga);
-
-    this.logger.log(`Transfer saga created: ${saga.id}`);
-
-    // Publish transfer initiated event
-    await this.eventPublisher.publish(
-      {
-        eventType: WalletEventType.TRANSFER_INITIATED,
-        walletId: fromWalletId,
-        amount,
-        metadata: { sagaId: saga.id, toWalletId, requestId },
-        timestamp: new Date(),
-      },
-    );
+    const saga = await this.createSaga(fromWalletId, toWalletId, amount, fromWallet.currency, requestId);
 
     try {
       await this.debitFromSender(saga);
-      // Reload saga to get updated state
-      const updatedSaga = await this.sagaRepository.findById(saga.id);
-      if (!updatedSaga) {
-        throw new Error(`Saga ${saga.id} not found after debit`);
-      }
+      await this.creditToReceiver(saga);
 
-      await this.creditToReceiver(updatedSaga);
-      // Reload again to get final state
-      const finalSaga = await this.sagaRepository.findById(saga.id);
-      if (!finalSaga) {
-        throw new Error(`Saga ${saga.id} not found after credit`);
-      }
-
-      finalSaga.markAsCompleted();
-      await this.sagaRepository.save(finalSaga);
-
-      this.logger.log(`Transfer saga completed: ${finalSaga.id}`);
-
-      // Publish transfer completed event
-      await this.eventPublisher.publish(
-        {
-          eventType: WalletEventType.TRANSFER_COMPLETED,
-          walletId: fromWalletId,
-          amount,
-          metadata: { sagaId: saga.id, toWalletId },
-          timestamp: new Date(),
-        },
-      );
+      this.logger.log(`Transfer saga completed: ${saga.id}`);
 
       const result = {
-        sagaId: finalSaga.id,
-        state: finalSaga.state,
-        fromWalletId: finalSaga.fromWalletId,
-        toWalletId: finalSaga.toWalletId,
-        amount: Number(finalSaga.amount),
+        sagaId: saga.id,
+        state: TransferSagaState.COMPLETED,
+        fromWalletId,
+        toWalletId,
+        amount,
       };
 
       // Store idempotency key
@@ -146,9 +106,17 @@ export class TransferSagaService {
       // Compensate if debit succeeded but credit failed
       if (currentSaga.state === TransferSagaState.DEBITED) {
         await this.compensate(currentSaga.id, currentSaga.fromWalletId, Number(currentSaga.amount), error.message);
-      } else {
+      } else if (
+        currentSaga.state !== TransferSagaState.COMPLETED &&
+        currentSaga.state !== TransferSagaState.COMPENSATED &&
+        currentSaga.state !== TransferSagaState.FAILED
+      ) {
         currentSaga.markAsFailed(error.message);
         await this.sagaRepository.save(currentSaga);
+      } else {
+        this.logger.warn(
+          `Transfer saga ${currentSaga.id} already in terminal state ${currentSaga.state}; preserving state after post-completion failure`,
+        );
       }
 
       throw error;
@@ -171,7 +139,12 @@ export class TransferSagaService {
     await this.walletService.invalidateBalanceCache(saga.fromWalletId);
   }
 
-  private async creditToReceiver(saga: TransferSaga): Promise<void> {
+  private async creditToReceiver(
+    saga: TransferSaga,
+    options: { recovered?: boolean } = {},
+  ): Promise<void> {
+    const { recovered = false } = options;
+
     await this.executeTransactionalStep({
       sagaId: saga.id,
       walletId: saga.toWalletId,
@@ -180,6 +153,24 @@ export class TransferSagaService {
       eventType: WalletEventType.FUNDS_DEPOSITED,
       eventMetadata: { sagaId: saga.id, transferFrom: saga.fromWalletId },
       logMessage: `Credited ${saga.amount} to wallet ${saga.toWalletId}`,
+      updateSaga: (currentSaga) => currentSaga.markAsCompleted(),
+      additionalOutboxEvents: (currentSaga) => [
+        new OutboxEvent(
+          currentSaga.fromWalletId,
+          WalletEventType.TRANSFER_COMPLETED,
+          {
+            eventType: WalletEventType.TRANSFER_COMPLETED,
+            walletId: currentSaga.fromWalletId,
+            amount: Number(currentSaga.amount),
+            metadata: {
+              sagaId: currentSaga.id,
+              toWalletId: currentSaga.toWalletId,
+              ...(recovered ? { recovered: true } : {}),
+            },
+            timestamp: new Date(),
+          },
+        ),
+      ],
     });
     
     // Invalidate cache for receiver wallet
@@ -225,21 +216,9 @@ export class TransferSagaService {
     if (saga.state === TransferSagaState.DEBITED) {
       this.logger.log(`Resuming saga ${sagaId} from DEBITED state`);
       try {
-        await this.creditToReceiver(saga);
-        
-        saga.markAsCompleted();
-        await this.sagaRepository.save(saga);
-        
-        this.logger.log(`Saga ${sagaId} recovery completed successfully`);
+        await this.creditToReceiver(saga, { recovered: true });
 
-        // Publish completion event
-        await this.eventPublisher.publish({
-          eventType: WalletEventType.TRANSFER_COMPLETED,
-          walletId: saga.fromWalletId,
-          amount: Number(saga.amount),
-          metadata: { sagaId: saga.id, toWalletId: saga.toWalletId, recovered: true },
-          timestamp: new Date(),
-        });
+        this.logger.log(`Saga ${sagaId} recovery completed successfully`);
       } catch (error: any) {
         this.logger.error(`Recovery failed for saga ${sagaId}: ${error.message}`);
         // If recovery fails (e.g., receiver wallet closed), we should compensate
@@ -260,8 +239,19 @@ export class TransferSagaService {
     eventMetadata: Record<string, any>;
     logMessage: string;
     updateSaga?: (saga: TransferSaga) => void;
+    additionalOutboxEvents?: (saga: TransferSaga) => OutboxEvent[];
   }): Promise<void> {
-    const { sagaId, walletId, amount, operation, eventType, eventMetadata, logMessage, updateSaga } = params;
+    const {
+      sagaId,
+      walletId,
+      amount,
+      operation,
+      eventType,
+      eventMetadata,
+      logMessage,
+      updateSaga,
+      additionalOutboxEvents,
+    } = params;
 
     await this.executeWithRetry(async () => {
       await this.transactionManager.execute(async (ctx) => {
@@ -321,9 +311,46 @@ export class TransferSagaService {
             timestamp: new Date(),
           }
         ));
+
+        if (additionalOutboxEvents) {
+          for (const outboxEvent of additionalOutboxEvents(saga)) {
+            ctx.publishEvent(outboxEvent);
+          }
+        }
       }, {
         isolationLevel: 'READ COMMITTED',
       });
+    });
+  }
+
+  private async createSaga(
+    fromWalletId: string,
+    toWalletId: string,
+    amount: number,
+    currency: string,
+    requestId?: string,
+  ): Promise<TransferSaga> {
+    return this.transactionManager.execute(async (ctx) => {
+      const saga = new TransferSaga(fromWalletId, toWalletId, amount, currency);
+      const createdSaga = await ctx.manager.save(saga);
+
+      ctx.publishEvent(new OutboxEvent(
+        fromWalletId,
+        WalletEventType.TRANSFER_INITIATED,
+        {
+          eventType: WalletEventType.TRANSFER_INITIATED,
+          walletId: fromWalletId,
+          amount,
+          metadata: { sagaId: createdSaga.id, toWalletId, requestId },
+          timestamp: new Date(),
+        },
+      ));
+
+      this.logger.log(`Transfer saga created: ${createdSaga.id}`);
+
+      return createdSaga;
+    }, {
+      isolationLevel: 'READ COMMITTED',
     });
   }
 
