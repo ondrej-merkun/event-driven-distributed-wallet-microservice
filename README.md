@@ -418,7 +418,7 @@ wallet-microservice/
 │   ├── e2e/                          # End-to-end test suites
 │   ├── integration/                  # Integration test suites
 │   ├── stress/                       # Stress/chaos tests
-│   ├── load/                         # Artillery scenario files
+│   ├── load/                         # Artillery scenario + processor files
 │   ├── shared/                       # Shared test bootstrap utilities
 │   ├── load-test.k6.js               # k6 load test script
 │   ├── setup.ts                      # Global test setup

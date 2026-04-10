@@ -9,7 +9,7 @@ Tests are organized into four layers:
 1. **Unit Tests** - Domain logic and business rules
 2. **Integration Tests** - Infrastructure components (outbox relay, saga recovery)
 3. **E2E Tests** - Full system behavior with real database/Redis
-4. **Load Tests** - Performance validation using k6
+4. **Load Tests** - Performance validation using Artillery and k6
 
 ---
 
@@ -148,21 +148,21 @@ Validates HTTP semantics:
 - All error responses include correlation IDs
 
 ### Rate Limiting
-`test/e2e/rate-limiting.e2e-spec.ts`
+`test/integration/rate-limiting.integration.spec.ts`
 
 Tests Redis-based rate limiting:
-- Per-wallet limits enforced
+- Per-client/IP limits enforced
 - 429 responses after threshold exceeded
 
 ### Health Checks
 `test/e2e/health.e2e-spec.ts`
 
-Validates `/health` endpoint for k8s probes:
+Validates `/v1/health` endpoint for k8s probes:
 - Database connectivity
-- Redis connectivity
+- Concurrent request handling
 
 ### Event Immutability
-`test/event-immutability.spec.ts`
+`test/integration/event-immutability.integration.spec.ts`
 
 Verifies database triggers prevent UPDATE/DELETE on `wallet_events` table. Ensures audit trail can't be tampered with.
 
@@ -170,20 +170,36 @@ Verifies database triggers prevent UPDATE/DELETE on `wallet_events` table. Ensur
 
 ## Load Testing
 
+### Artillery Suite
+`test/load/load-test.yml`
+
+Mixed traffic profile covering:
+- Deposits
+- Withdrawals
+- Transfers
+- Balance checks
+
+Uses `test/load/load-test.processor.js` to generate stable wallet IDs, numeric payloads, request IDs, and forwarded client IPs.
+
+Run with:
+```bash
+npm run test:load
+```
+
 ### k6 Suite
 `test/load-test.k6.js`
 
 Three scenarios running concurrently:
 
-**1. Concurrent deposits** (20 VUs, 1000 iterations)
+**1. Concurrent deposits** (20 VUs, 1000 shared iterations)
 - Different wallets, minimal contention
 - Tests overall throughput
 
-**2. Same wallet operations** (10 VUs, 100 iterations)
+**2. Same wallet operations** (10 VUs, 100 shared iterations)
 - High contention on single wallet
 - Tests pessimistic locking performance
 
-**3. Concurrent transfers** (10 VUs, 50 iterations)
+**3. Concurrent transfers** (10 VUs, 50 shared iterations)
 - Full saga orchestration under load
 - Tests distributed transaction throughput
 
@@ -193,7 +209,7 @@ Three scenarios running concurrently:
 
 Run with:
 ```bash
-docker run --rm -i grafana/k6 run - < test/load-test.k6.js
+npm run test:load:k6
 ```
 
 ---
@@ -235,7 +251,8 @@ Maximum concurrency and chaos scenarios. ~30 minutes. Run before deployments.
 ```bash
 npm run test              # Unit tests
 npm run test:integration  # Integration tests
-npm run test:load         # k6 load tests
+npm run test:load         # Artillery load tests
+npm run test:load:k6      # k6 load tests
 ```
 ---
 

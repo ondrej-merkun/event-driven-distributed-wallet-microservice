@@ -8,6 +8,7 @@ import { OutboxRepository } from '../../src/infrastructure/repositories/outbox.r
 import { OutboxEvent } from '../../src/domain/entities/outbox-event.entity';
 import { WalletEventType } from '../../src/modules/wallet/entities/wallet-event.entity';
 import { AppModule } from '../../src/app.module';
+import { configureTestApp } from '../shared/shared-test-app';
 
 describe('TransactionManager Integration Tests', () => {
   let app: INestApplication;
@@ -22,6 +23,7 @@ describe('TransactionManager Integration Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureTestApp(app);
     await app.init();
 
     transactionManager = moduleFixture.get<TransactionManager>(TransactionManager);

@@ -29,7 +29,7 @@ describe('Wallet E2E Tests', () => {
   describe('Basic Operations', () => {
     it('should deposit funds and create wallet', async () => {
       const response = await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 100 })
         .set('x-request-id', 'test-deposit-1')
         .expect(200);
@@ -43,14 +43,14 @@ describe('Wallet E2E Tests', () => {
       
       // First request
       const response1 = await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 100 })
         .set('x-request-id', requestId)
         .expect(200);
 
       // Duplicate request
       const response2 = await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 100 })
         .set('x-request-id', requestId)
         .expect(200);
@@ -63,13 +63,13 @@ describe('Wallet E2E Tests', () => {
     it('should withdraw funds', async () => {
       // Setup: deposit first
       await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Withdraw
       const response = await request(app.getHttpServer())
-        .post('/wallet/user-123/withdraw')
+        .post('/v1/wallet/user-123/withdraw')
         .send({ amount: 50 })
         .set('x-request-id', 'test-withdraw-1')
         .expect(200);
@@ -79,12 +79,12 @@ describe('Wallet E2E Tests', () => {
 
     it('should reject withdrawal with insufficient funds', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 50 })
         .expect(200);
 
       await request(app.getHttpServer())
-        .post('/wallet/user-123/withdraw')
+        .post('/v1/wallet/user-123/withdraw')
         .send({ amount: 100 })
         .set('x-request-id', 'test-insufficient-1')
         .expect(422); // Business rule violation
@@ -94,21 +94,21 @@ describe('Wallet E2E Tests', () => {
   describe('Validation', () => {
     it('should reject deposit with negative amount', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/user-val/deposit')
+        .post('/v1/wallet/user-val/deposit')
         .send({ amount: -100 })
         .expect(400);
     });
 
     it('should reject deposit with zero amount', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/user-val/deposit')
+        .post('/v1/wallet/user-val/deposit')
         .send({ amount: 0 })
         .expect(400);
     });
 
     it('should reject transfer with missing recipient', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/user-val/transfer')
+        .post('/v1/wallet/user-val/transfer')
         .send({ amount: 10 })
         .expect(400);
     });
@@ -118,13 +118,13 @@ describe('Wallet E2E Tests', () => {
     it('should complete transfer successfully', async () => {
       // Setup sender with funds
       await request(app.getHttpServer())
-        .post('/wallet/alice/deposit')
+        .post('/v1/wallet/alice/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Transfer
       const response = await request(app.getHttpServer())
-        .post('/wallet/alice/transfer')
+        .post('/v1/wallet/alice/transfer')
         .send({ toWalletId: 'bob', amount: 50 })
         .set('x-request-id', 'test-transfer-1')
         .expect(200);
@@ -133,12 +133,12 @@ describe('Wallet E2E Tests', () => {
 
       // Verify balances
       const aliceBalance = await request(app.getHttpServer())
-        .get('/wallet/alice')
+        .get('/v1/wallet/alice')
         .expect(200);
       expect(aliceBalance.body.balance).toBe(50);
 
       const bobBalance = await request(app.getHttpServer())
-        .get('/wallet/bob')
+        .get('/v1/wallet/bob')
         .expect(200);
       expect(bobBalance.body.balance).toBe(50);
     });
@@ -146,7 +146,7 @@ describe('Wallet E2E Tests', () => {
     it('should handle duplicate transfer requests (idempotency)', async () => {
       // Setup
       await request(app.getHttpServer())
-        .post('/wallet/alice-idem/deposit')
+        .post('/v1/wallet/alice-idem/deposit')
         .send({ amount: 100 })
         .expect(200);
 
@@ -154,33 +154,33 @@ describe('Wallet E2E Tests', () => {
 
       // First request
       await request(app.getHttpServer())
-        .post('/wallet/alice-idem/transfer')
+        .post('/v1/wallet/alice-idem/transfer')
         .send({ toWalletId: 'bob-idem', amount: 50 })
         .set('x-request-id', requestId)
         .expect(200);
 
       // Duplicate request
       await request(app.getHttpServer())
-        .post('/wallet/alice-idem/transfer')
+        .post('/v1/wallet/alice-idem/transfer')
         .send({ toWalletId: 'bob-idem', amount: 50 })
         .set('x-request-id', requestId)
         .expect(200);
 
       // Verify balances (should still be 50, not 0)
       const aliceBalance = await request(app.getHttpServer())
-        .get('/wallet/alice-idem')
+        .get('/v1/wallet/alice-idem')
         .expect(200);
       expect(aliceBalance.body.balance).toBe(50);
     });
 
     it('should fail transfer with insufficient funds', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/alice-poor/deposit')
+        .post('/v1/wallet/alice-poor/deposit')
         .send({ amount: 10 })
         .expect(200);
 
       await request(app.getHttpServer())
-        .post('/wallet/alice-poor/transfer')
+        .post('/v1/wallet/alice-poor/transfer')
         .send({ toWalletId: 'bob-rich', amount: 50 })
         .expect(422); // Business rule violation
     });
@@ -188,23 +188,23 @@ describe('Wallet E2E Tests', () => {
     it('should handle bidirectional transfers (A->B and B->A simultaneously)', async () => {
       // Setup both wallets
       await request(app.getHttpServer())
-        .post('/wallet/alice/deposit')
+        .post('/v1/wallet/alice/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       await request(app.getHttpServer())
-        .post('/wallet/bob/deposit')
+        .post('/v1/wallet/bob/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Simultaneous bidirectional transfers
       const promises = [
         request(app.getHttpServer())
-          .post('/wallet/alice/transfer')
+          .post('/v1/wallet/alice/transfer')
           .send({ toWalletId: 'bob', amount: 30 })
           .set('x-request-id', 'transfer-a-to-b'),
         request(app.getHttpServer())
-          .post('/wallet/bob/transfer')
+          .post('/v1/wallet/bob/transfer')
           .send({ toWalletId: 'alice', amount: 20 })
           .set('x-request-id', 'transfer-b-to-a'),
       ];
@@ -213,11 +213,11 @@ describe('Wallet E2E Tests', () => {
 
       // Verify final balances
       const aliceBalance = await request(app.getHttpServer())
-        .get('/wallet/alice')
+        .get('/v1/wallet/alice')
         .expect(200);
       
       const bobBalance = await request(app.getHttpServer())
-        .get('/wallet/bob')
+        .get('/v1/wallet/bob')
         .expect(200);
 
       // Alice: 100 - 30 + 20 = 90
@@ -231,18 +231,18 @@ describe('Wallet E2E Tests', () => {
     it('should handle concurrent withdrawals on same wallet', async () => {
       // Setup wallet with $100
       await request(app.getHttpServer())
-        .post('/wallet/user-123/deposit')
+        .post('/v1/wallet/user-123/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Try two concurrent $100 withdrawals - only one should succeed
       const promises = [
         request(app.getHttpServer())
-          .post('/wallet/user-123/withdraw')
+          .post('/v1/wallet/user-123/withdraw')
           .send({ amount: 100 })
           .set('x-request-id', 'concurrent-withdraw-1'),
         request(app.getHttpServer())
-          .post('/wallet/user-123/withdraw')
+          .post('/v1/wallet/user-123/withdraw')
           .send({ amount: 100 })
           .set('x-request-id', 'concurrent-withdraw-2'),
       ];
@@ -258,7 +258,7 @@ describe('Wallet E2E Tests', () => {
 
       // Final balance should be 0
       const balance = await request(app.getHttpServer())
-        .get('/wallet/user-123')
+        .get('/v1/wallet/user-123')
         .expect(200);
       expect(balance.body.balance).toBe(0);
     });
@@ -266,7 +266,7 @@ describe('Wallet E2E Tests', () => {
     it('should handle 2 concurrent deposits', async () => {
       // Pre-create wallet to avoid contention on creation
       await request(app.getHttpServer())
-        .post('/wallet/user-concurrent/deposit')
+        .post('/v1/wallet/user-concurrent/deposit')
         .send({ amount: 0.01 }) // Small amount to create wallet
         .expect(200);
 
@@ -274,7 +274,7 @@ describe('Wallet E2E Tests', () => {
       for (let i = 0; i < 2; i++) { // Reduced from 100
         promises.push(
           request(app.getHttpServer())
-            .post('/wallet/user-concurrent/deposit')
+            .post('/v1/wallet/user-concurrent/deposit')
             .send({ amount: 10 })
             .set('x-request-id', `concurrent-deposit-${i}`)
         );
@@ -289,7 +289,7 @@ describe('Wallet E2E Tests', () => {
       expect(successes).toBeGreaterThanOrEqual(1); // At least one should succeed
 
       const balance = await request(app.getHttpServer())
-        .get('/wallet/user-concurrent')
+        .get('/v1/wallet/user-concurrent')
         .expect(200);
 
       // Balance should be initial (0.01) + successes * 10
@@ -301,19 +301,19 @@ describe('Wallet E2E Tests', () => {
   describe('Wallet History', () => {
     it('should retrieve transaction history with pagination', async () => {
       // Create 3 transactions
-      await request(app.getHttpServer()).post('/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
-      await request(app.getHttpServer()).post('/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
-      await request(app.getHttpServer()).post('/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/user-hist/deposit').send({ amount: 10 }).expect(200);
 
       // Test Limit
       const limitResponse = await request(app.getHttpServer())
-        .get('/wallet/user-hist/history?limit=2')
+        .get('/v1/wallet/user-hist/history?limit=2')
         .expect(200);
       expect(limitResponse.body.length).toBe(2);
 
       // Test Offset
       const offsetResponse = await request(app.getHttpServer())
-        .get('/wallet/user-hist/history?limit=2&offset=2')
+        .get('/v1/wallet/user-hist/history?limit=2&offset=2')
         .expect(200);
       expect(offsetResponse.body.length).toBeGreaterThanOrEqual(1); // Should be at least 1 (the 3rd one)
     });

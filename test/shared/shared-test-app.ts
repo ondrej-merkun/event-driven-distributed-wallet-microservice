@@ -1,11 +1,26 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
 import { AppModule } from '@src/app.module';
 import { DataSource } from 'typeorm';
 
 let sharedApp: INestApplication | null = null;
 let sharedDataSource: DataSource | null = null;
 let moduleRef: TestingModule | null = null;
+
+export function configureTestApp(app: INestApplication): void {
+  app.getHttpAdapter().getInstance().set('trust proxy', 'loopback');
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+}
 
 /**
  * Get or create a shared NestJS application instance for E2E tests.
@@ -23,13 +38,7 @@ export async function getSharedTestApp(): Promise<{
     }).compile();
 
     sharedApp = moduleRef.createNestApplication();
-    sharedApp.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      })
-    );
+    configureTestApp(sharedApp);
 
     sharedDataSource = sharedApp.get(DataSource);
     await sharedApp.init();
