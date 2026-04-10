@@ -1,16 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
-import { AppModule } from '../../src/app.module';
 import { DataSource } from 'typeorm';
-import { SagaRecoveryService } from '../../src/workers/saga-recovery.service';
+import { AppModule } from '../../src/app.module';
+import { AppConfigService } from '../../src/config/app-config.service';
 import { TransferSaga, TransferSagaState } from '../../src/modules/transfer/entities/transfer-saga.entity';
 import { TransferSagaRepository } from '../../src/modules/transfer/repositories/transfer-saga.repository';
 import { Wallet } from '../../src/modules/wallet/entities/wallet.entity';
 import { configureTestApp } from '../shared/shared-test-app';
+import { SagaRecoveryService } from '../../src/workers/saga-recovery.service';
 
 describe('SagaRecovery Integration Tests', () => {
   let app: INestApplication;
   let dataSource: DataSource;
+  let configService: AppConfigService;
   let sagaRecoveryService: SagaRecoveryService;
   let transferSagaRepository: TransferSagaRepository;
 
@@ -22,14 +24,14 @@ describe('SagaRecovery Integration Tests', () => {
     app = moduleFixture.createNestApplication();
     configureTestApp(app);
     await app.init();
-    
+
     dataSource = moduleFixture.get<DataSource>(DataSource);
+    configService = moduleFixture.get<AppConfigService>(AppConfigService);
     sagaRecoveryService = moduleFixture.get<SagaRecoveryService>(SagaRecoveryService);
     transferSagaRepository = moduleFixture.get<TransferSagaRepository>(TransferSagaRepository);
   });
 
   beforeEach(async () => {
-    // Clean tables
     await dataSource.query('TRUNCATE TABLE wallets, transfer_sagas, wallet_events, outbox_events CASCADE');
   });
 
@@ -37,222 +39,134 @@ describe('SagaRecovery Integration Tests', () => {
     await app.close();
   });
 
-  describe('Stuck Saga Detection', () => {
-    it('should detect sagas stuck in PENDING state', async () => {
-      // Create a stuck saga (PENDING for > 5 minutes)
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-stuck-1';
-      wallet1.balance = 100;
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-stuck-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
-
-      const stuckSaga = new TransferSaga(
-        'wallet-stuck-1',
-        'wallet-stuck-2',
-        50,
-        'USD',
-        
-      );
-      stuckSaga.state = TransferSagaState.PENDING;
-      stuckSaga.createdAt = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes ago
-      stuckSaga.updatedAt = new Date(Date.now() - 10 * 60 * 1000);
-      
-      await dataSource.manager.save(stuckSaga);
-
-      // Run recovery
-      await sagaRecoveryService.recoverStuckSagas();
-
-      // Saga should be attempted to recover (state might change)
-      const recovered = await transferSagaRepository.findById(stuckSaga.id);
-      // State should have changed from PENDING or saga should be marked for recovery
-      expect(recovered).toBeDefined();
+  it('completes stale DEBITED sagas', async () => {
+    const { senderId, receiverId } = await createWalletPair('complete', 50, 0);
+    const saga = await insertSaga({
+      amount: 50,
+      fromWalletId: senderId,
+      state: TransferSagaState.DEBITED,
+      toWalletId: receiverId,
+      updatedAt: oldEnoughDate(configService.sagaStuckThreshold),
     });
 
-    it('should detect sagas stuck in DEBITED state', async () => {
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-debited-1';
-      wallet1.balance = 50; // Already debited
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-debited-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
+    await sagaRecoveryService.processStuckSagas();
 
-      const stuckSaga = new TransferSaga(
-        'wallet-debited-1',
-        'wallet-debited-2',
-        50,
-        'USD',
-        
-      );
-      stuckSaga.state = TransferSagaState.DEBITED;
-      stuckSaga.createdAt = new Date(Date.now() - 10 * 60 * 1000);
-      stuckSaga.updatedAt = new Date(Date.now() - 10 * 60 * 1000);
-      
-      await dataSource.manager.save(stuckSaga);
+    const recovered = await transferSagaRepository.findById(saga.id);
+    const receiver = await dataSource.getRepository(Wallet).findOneBy({ id: receiverId });
 
-      await sagaRecoveryService.recoverStuckSagas();
-
-      const recovered = await transferSagaRepository.findById(stuckSaga.id);
-      // Should attempt to complete the credit step
-      expect(recovered).toBeDefined();
-    });
-
-    it('should not interfere with recently updated sagas', async () => {
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-recent-1';
-      wallet1.balance = 100;
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-recent-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
-
-      const recentSaga = new TransferSaga(
-        'wallet-recent-1',
-        'wallet-recent-2',
-        50,
-        'USD',
-        
-      );
-      recentSaga.state = TransferSagaState.PENDING;
-      recentSaga.createdAt = new Date(Date.now() - 1 * 60 * 1000); // 1 minute ago
-      recentSaga.updatedAt = new Date(Date.now() - 1 * 60 * 1000);
-      
-      const savedSaga = await dataSource.manager.save(recentSaga);
-
-      await sagaRecoveryService.recoverStuckSagas();
-
-      const afterRecovery = await transferSagaRepository.findById(savedSaga.id);
-      // Should remain unchanged
-      expect(afterRecovery).toBeDefined();
-      expect(afterRecovery!.state).toBe(TransferSagaState.PENDING);
-      expect(afterRecovery!.updatedAt).toEqual(savedSaga.updatedAt);
-    });
+    expect(recovered?.state).toBe(TransferSagaState.COMPLETED);
+    expect(Number(receiver?.balance)).toBe(50);
   });
 
-  describe('Recovery Execution', () => {
-    it('should complete stuck DEBITED saga', async () => {
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-complete-1';
-      wallet1.balance = 50;
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-complete-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
-
-      const saga = new TransferSaga(
-        'wallet-complete-1',
-        'wallet-complete-2',
-        50,
-        'USD',
-        
-      );
-      saga.state = TransferSagaState.DEBITED;
-      saga.createdAt = new Date(Date.now() - 10 * 60 * 1000);
-      saga.updatedAt = new Date(Date.now() - 10 * 60 * 1000);
-      
-      await dataSource.manager.save(saga);
-
-      await sagaRecoveryService.recoverStuckSagas();
-
-      // Check if saga completed
-      const recovered = await transferSagaRepository.findById(saga.id);
-      
-      // Saga should be in a more progressed state or completed
-      expect(recovered).toBeDefined();
-      expect([TransferSagaState.COMPLETED, TransferSagaState.DEBITED]).toContain(recovered!.state);
+  it('ignores stale sagas that are not in DEBITED state', async () => {
+    const { senderId, receiverId } = await createWalletPair('pending', 100, 0);
+    const saga = await insertSaga({
+      amount: 50,
+      fromWalletId: senderId,
+      state: TransferSagaState.PENDING,
+      toWalletId: receiverId,
+      updatedAt: oldEnoughDate(configService.sagaStuckThreshold),
     });
+
+    await sagaRecoveryService.processStuckSagas();
+
+    const afterRecovery = await transferSagaRepository.findById(saga.id);
+    const receiver = await dataSource.getRepository(Wallet).findOneBy({ id: receiverId });
+
+    expect(afterRecovery?.state).toBe(TransferSagaState.PENDING);
+    expect(Number(receiver?.balance)).toBe(0);
   });
 
-  describe('Timeout Handling', () => {
-    it('should mark extremely old sagas as failed', async () => {
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-timeout-1';
-      wallet1.balance = 100;
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-timeout-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
-
-      const oldSaga = new TransferSaga(
-        'wallet-timeout-1',
-        'wallet-timeout-2',
-        50,
-        'USD',
-        
-      );
-      oldSaga.state = TransferSagaState.PENDING;
-      oldSaga.createdAt = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
-      oldSaga.updatedAt = new Date(Date.now() - 60 * 60 * 1000);
-      
-      await dataSource.manager.save(oldSaga);
-
-      await sagaRecoveryService.recoverStuckSagas();
-
-      const recovered = await transferSagaRepository.findById(oldSaga.id);
-      // Very old sagas might be marked as failed or compensated
-      expect(recovered).toBeDefined();
+  it('ignores recently updated DEBITED sagas', async () => {
+    const { senderId, receiverId } = await createWalletPair('recent', 50, 0);
+    const saga = await insertSaga({
+      amount: 50,
+      fromWalletId: senderId,
+      state: TransferSagaState.DEBITED,
+      toWalletId: receiverId,
+      updatedAt: new Date(),
     });
+
+    await sagaRecoveryService.processStuckSagas();
+
+    const afterRecovery = await transferSagaRepository.findById(saga.id);
+    const receiver = await dataSource.getRepository(Wallet).findOneBy({ id: receiverId });
+
+    expect(afterRecovery?.state).toBe(TransferSagaState.DEBITED);
+    expect(Number(receiver?.balance)).toBe(0);
   });
 
-  describe('Concurrency Safety', () => {
-    it('should handle concurrent recovery attempts', async () => {
-      const wallet1 = new Wallet('wallet-1', 'USD');
-      wallet1.id = 'wallet-concurrent-1';
-      wallet1.balance = 100;
-      wallet1.currency = 'USD';
-      
-      const wallet2 = new Wallet('wallet-2', 'USD');
-      wallet2.id = 'wallet-concurrent-2';
-      wallet2.balance = 0;
-      wallet2.currency = 'USD';
-      
-      await dataSource.manager.save([wallet1, wallet2]);
-
-      const saga = new TransferSaga(
-        'wallet-concurrent-1',
-        'wallet-concurrent-2',
-        50,
-        'USD',
-        
-      );
-      saga.state = TransferSagaState.PENDING;
-      saga.createdAt = new Date(Date.now() - 10 * 60 * 1000);
-      saga.updatedAt = new Date(Date.now() - 10 * 60 * 1000);
-      
-      await dataSource.manager.save(saga);
-
-      // Trigger multiple concurrent recoveries
-      await Promise.all([
-        sagaRecoveryService.recoverStuckSagas(),
-        sagaRecoveryService.recoverStuckSagas(),
-        sagaRecoveryService.recoverStuckSagas(),
-      ]);
-
-      // Should not cause errors or duplicate processing
-      const recovered = await transferSagaRepository.findById(saga.id);
-      expect(recovered).toBeDefined();
+  it('does not double-credit when recovery is triggered concurrently', async () => {
+    const { senderId, receiverId } = await createWalletPair('concurrent', 50, 0);
+    const saga = await insertSaga({
+      amount: 50,
+      fromWalletId: senderId,
+      state: TransferSagaState.DEBITED,
+      toWalletId: receiverId,
+      updatedAt: oldEnoughDate(configService.sagaStuckThreshold),
     });
+
+    await Promise.all([
+      sagaRecoveryService.processStuckSagas(),
+      sagaRecoveryService.processStuckSagas(),
+      sagaRecoveryService.processStuckSagas(),
+    ]);
+
+    const afterRecovery = await transferSagaRepository.findById(saga.id);
+    const receiver = await dataSource.getRepository(Wallet).findOneBy({ id: receiverId });
+
+    expect(afterRecovery?.state).toBe(TransferSagaState.COMPLETED);
+    expect(Number(receiver?.balance)).toBe(50);
   });
+
+  async function createWalletPair(
+    prefix: string,
+    senderBalance: number,
+    receiverBalance: number,
+  ): Promise<{ senderId: string; receiverId: string }> {
+    const senderId = `${prefix}-sender`;
+    const receiverId = `${prefix}-receiver`;
+
+    const sender = new Wallet(senderId, 'USD');
+    sender.balance = senderBalance;
+
+    const receiver = new Wallet(receiverId, 'USD');
+    receiver.balance = receiverBalance;
+
+    await dataSource.manager.save([sender, receiver]);
+
+    return { senderId, receiverId };
+  }
+
+  async function insertSaga(params: {
+    fromWalletId: string;
+    toWalletId: string;
+    amount: number;
+    state: TransferSagaState;
+    updatedAt: Date;
+  }): Promise<TransferSaga> {
+    const saga = new TransferSaga(
+      params.fromWalletId,
+      params.toWalletId,
+      params.amount,
+      'USD',
+    );
+    saga.state = params.state;
+
+    const savedSaga = await dataSource.manager.save(saga);
+    await dataSource.query(
+      `
+        UPDATE transfer_sagas
+        SET created_at = $2, updated_at = $2
+        WHERE id = $1
+      `,
+      [savedSaga.id, params.updatedAt],
+    );
+
+    return (await transferSagaRepository.findById(savedSaga.id))!;
+  }
 });
+
+function oldEnoughDate(stuckThresholdMs: number): Date {
+  return new Date(Date.now() - stuckThresholdMs - 1_000);
+}
