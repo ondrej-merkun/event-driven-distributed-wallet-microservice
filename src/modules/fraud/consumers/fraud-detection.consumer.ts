@@ -48,6 +48,7 @@ export class FraudDetectionConsumer implements OnModuleInit, OnModuleDestroy {
     const queueName = this.configService.fraudDetectionQueue;
     const dlxExchange = `${exchange}${FRAUD_CONSTANTS.AMQP.DLX_SUFFIX}`;
     const dlqQueue = `${queueName}${FRAUD_CONSTANTS.AMQP.DLQ_SUFFIX}`;
+    const supportedRoutingKeys = this.getSupportedRoutingKeys();
 
     // 1. Assert Dead Letter Exchange (DLX)
     await channel.assertExchange(dlxExchange, FRAUD_CONSTANTS.AMQP.EXCHANGE_TYPE, { durable: true });
@@ -71,19 +72,23 @@ export class FraudDetectionConsumer implements OnModuleInit, OnModuleDestroy {
 
     // 6. Assert Wait Queues for Non-Blocking Retries
     for (const delay of FRAUD_CONSTANTS.RETRY.DELAYS) {
-      const waitQueue = `${queueName}${FRAUD_CONSTANTS.AMQP.WAIT_QUEUE_SUFFIX}${delay}`;
-      await channel.assertQueue(waitQueue, {
-        durable: true,
-        arguments: {
-          [FRAUD_CONSTANTS.HEADERS.DEAD_LETTER_EXCHANGE]: exchange, // Route back to main exchange after TTL
-          [FRAUD_CONSTANTS.HEADERS.MESSAGE_TTL]: delay,
-        },
-      });
+      for (const routingKey of supportedRoutingKeys) {
+        const waitQueue = this.getWaitQueueName(delay, routingKey);
+        await channel.assertQueue(waitQueue, {
+          durable: true,
+          arguments: {
+            [FRAUD_CONSTANTS.HEADERS.DEAD_LETTER_EXCHANGE]: exchange,
+            'x-dead-letter-routing-key': routingKey,
+            [FRAUD_CONSTANTS.HEADERS.MESSAGE_TTL]: delay,
+          },
+        });
+      }
     }
     
     // Bind to withdrawal and transfer events
-    await channel.bindQueue(queueName, exchange, FRAUD_CONSTANTS.ROUTING_KEYS.FUNDS_WITHDRAWN);
-    await channel.bindQueue(queueName, exchange, FRAUD_CONSTANTS.ROUTING_KEYS.TRANSFER_COMPLETED);
+    for (const routingKey of supportedRoutingKeys) {
+      await channel.bindQueue(queueName, exchange, routingKey);
+    }
     
     // Only fetch 1 message at a time for efficient load-balancing
     await channel.prefetch(1);
@@ -168,8 +173,16 @@ export class FraudDetectionConsumer implements OnModuleInit, OnModuleDestroy {
     const retryCount = (msg.properties.headers?.[FRAUD_CONSTANTS.HEADERS.RETRY_COUNT] || 0);
     
     if (retryCount < FRAUD_CONSTANTS.RETRY.MAX_ATTEMPTS) {
+      const routingKey = msg.fields?.routingKey;
+
+      if (!this.isSupportedRoutingKey(routingKey)) {
+        this.logger.error(`Cannot retry fraud message with unsupported routing key: ${routingKey ?? 'missing'}`);
+        channel.nack(msg, false, false);
+        return;
+      }
+
       const delay = FRAUD_CONSTANTS.RETRY.DELAYS[retryCount] || FRAUD_CONSTANTS.RETRY.DELAYS[FRAUD_CONSTANTS.RETRY.DELAYS.length - 1];
-      const waitQueue = `${this.configService.fraudDetectionQueue}${FRAUD_CONSTANTS.AMQP.WAIT_QUEUE_SUFFIX}${delay}`;
+      const waitQueue = this.getWaitQueueName(delay, routingKey);
       
       this.logger.warn(`Retrying message (attempt ${retryCount + 1}/${FRAUD_CONSTANTS.RETRY.MAX_ATTEMPTS}) via ${waitQueue}`);
       
@@ -179,7 +192,6 @@ export class FraudDetectionConsumer implements OnModuleInit, OnModuleDestroy {
         {
           headers: { ...msg.properties.headers, [FRAUD_CONSTANTS.HEADERS.RETRY_COUNT]: retryCount + 1 },
           persistent: true,
-          type: msg.fields.routingKey, 
         }
       );
       
@@ -236,6 +248,21 @@ export class FraudDetectionConsumer implements OnModuleInit, OnModuleDestroy {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Could not save fraud alert: ${errorMessage}`);
     }
+  }
+
+  private getSupportedRoutingKeys(): string[] {
+    return [
+      FRAUD_CONSTANTS.ROUTING_KEYS.FUNDS_WITHDRAWN,
+      FRAUD_CONSTANTS.ROUTING_KEYS.TRANSFER_COMPLETED,
+    ];
+  }
+
+  private isSupportedRoutingKey(routingKey: string | undefined): routingKey is string {
+    return !!routingKey && this.getSupportedRoutingKeys().includes(routingKey);
+  }
+
+  private getWaitQueueName(delay: number, routingKey: string): string {
+    return `${this.configService.fraudDetectionQueue}${FRAUD_CONSTANTS.AMQP.WAIT_QUEUE_SUFFIX}${delay}.${routingKey}`;
   }
 
   async onModuleDestroy() {
