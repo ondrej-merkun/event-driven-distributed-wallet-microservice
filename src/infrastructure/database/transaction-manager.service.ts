@@ -25,13 +25,14 @@ export class TransactionManager {
   constructor(
     private dataSource: DataSource,
     private outboxRepository: OutboxRepository,
-    private eventPublisher: EventPublisher,
+    _eventPublisher: EventPublisher,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
   ) {}
 
   /**
    * Execute a business operation within a database transaction and optional distributed lock.
-   * Handles the Outbox Pattern automatically: events added via context.publishEvent are saved to DB and published after commit.
+   * Handles the Outbox Pattern automatically: events added via context.publishEvent
+   * are saved to DB and picked up by the outbox relay after commit.
    */
   async execute<T>(
     operation: (context: TransactionContext) => Promise<T>,
@@ -73,10 +74,6 @@ export class TransactionManager {
       // 4. Commit Transaction
       await queryRunner.commitTransaction();
 
-      // 5. Publish Events to Broker (Best Effort, Post-Commit)
-      // Note: If this fails, the Outbox Relay will pick it up later.
-      this.publishEventsAsync(eventsToPublish);
-
       return result;
     } catch (error) {
       await queryRunner.rollbackTransaction();
@@ -91,20 +88,4 @@ export class TransactionManager {
     }
   }
 
-  private async publishEventsAsync(events: OutboxEvent[]) {
-    if (events.length === 0) return;
-    
-    // Fire and forget - don't block response
-    Promise.allSettled(
-      events.map(async (event) => {
-        try {
-          await this.eventPublisher.publish(event.payload);
-          // We could mark as published here, but let's leave that to the relay for simplicity/safety
-          // or we could add a method to OutboxRepository to mark specific IDs as published
-        } catch (e) {
-          this.logger.warn(`Failed to publish event ${event.id} immediately: ${(e as Error).message}`);
-        }
-      })
-    );
-  }
 }

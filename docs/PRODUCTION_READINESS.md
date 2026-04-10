@@ -49,7 +49,7 @@
 *   **Log Retention**: Establish retention policies compliant with regulatory requirements, ensuring sensitive data is redacted or masked.
 
 ### 2.3 Health Checks
-*   **Liveness & Readiness**: Health probes at `/health/live` (process running) and `/health/ready` (dependencies available).
+*   **Liveness & Readiness**: Health probes at `/v1/health/live` (process running) and `/v1/health/ready` (dependencies available).
 *   **Dependency Checks**: Readiness includes database connectivity verification.
 *   **Graceful Shutdown**: Redis and RabbitMQ connections closed on module destroy.
 

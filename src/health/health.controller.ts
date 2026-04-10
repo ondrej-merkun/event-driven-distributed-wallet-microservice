@@ -7,7 +7,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 @ApiTags('health')
-@Controller('health')
+@Controller({ path: 'health', version: '1' })
 export class HealthController {
   constructor(
     private health: HealthCheckService,

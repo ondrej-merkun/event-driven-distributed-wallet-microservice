@@ -34,11 +34,11 @@ describe('Reliability E2E Tests', () => {
       const senderId = 'sender-recovery';
       const receiverId = 'receiver-recovery';
       
-      const res1 = await request(app.getHttpServer()).post(`/wallet/${senderId}/deposit`).send({ amount: 1000 });
+      const res1 = await request(app.getHttpServer()).post(`/v1/wallet/${senderId}/deposit`).send({ amount: 1000 });
       if (res1.status !== 200) console.log('Sender Deposit Failed:', res1.body);
       expect(res1.status).toBe(200);
 
-      const res2 = await request(app.getHttpServer()).post(`/wallet/${receiverId}/deposit`).send({ amount: 10 });
+      const res2 = await request(app.getHttpServer()).post(`/v1/wallet/${receiverId}/deposit`).send({ amount: 10 });
       if (res2.status !== 200) console.log('Receiver Deposit Failed:', res2.body);
       expect(res2.status).toBe(200);
 

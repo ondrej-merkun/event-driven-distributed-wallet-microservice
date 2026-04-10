@@ -7,10 +7,10 @@ const BASE_URL = __ENV.API_URL || 'http://host.docker.internal:3000';
 export const options = {
   scenarios: {
     concurrent_deposits: {
-      executor: 'per-vu-iterations',
+      executor: 'shared-iterations',
       exec: 'concurrent_deposits',
       vus: 20,
-      iterations: 1000, // Total 1000 deposits
+      iterations: 1000,
       maxDuration: '1m',
       startTime: '0s',
     },
@@ -23,14 +23,11 @@ export const options = {
       startTime: '10s', // Start after some deposits
     },
     concurrent_transfers: {
-      executor: 'per-vu-iterations',
+      executor: 'shared-iterations',
       exec: 'concurrent_transfers',
       vus: 10,
-      iterations: 50, // 10 VUs * 50 iters = 500 transfers (original was 50 total? No, loop was 50. Let's match original 50 total)
-      // Original: 50 concurrent transfers. 
-      // Let's do 50 iterations total with 10 VUs -> 5 iters each.
-      // Wait, original was: for loop 50 times.
-      // So 50 total requests.
+      iterations: 50,
+      maxDuration: '30s',
     },
   },
   thresholds: {
@@ -56,10 +53,7 @@ export function concurrent_deposits() {
   const id = __VU * 1000 + __ITER;
   const payload = JSON.stringify({ amount: 100 });
   const params = {
-    headers: {
-      'Content-Type': 'application/json',
-      'x-request-id': `k6-deposit-${id}-${Date.now()}`,
-    },
+    headers: requestHeaders(`k6-deposit-${id}`),
   };
 
   const res = http.post(`${BASE_URL}/v1/wallet/user-${id}/deposit`, payload, params);
@@ -76,13 +70,26 @@ export function same_wallet_ops() {
   // Let's just deposit 100 then withdraw 10.
   
   const walletId = 'load-test-user';
-  const params = { headers: { 'Content-Type': 'application/json' } };
+  const depositParams = {
+    headers: requestHeaders(`k6-same-wallet-deposit-${__VU}-${__ITER}`),
+  };
+  const withdrawParams = {
+    headers: requestHeaders(`k6-same-wallet-withdraw-${__VU}-${__ITER}`),
+  };
 
   // Deposit
-  http.post(`${BASE_URL}/v1/wallet/${walletId}/deposit`, JSON.stringify({ amount: 100 }), params);
+  http.post(
+    `${BASE_URL}/v1/wallet/${walletId}/deposit`,
+    JSON.stringify({ amount: 100 }),
+    depositParams,
+  );
 
   // Withdraw
-  const res = http.post(`${BASE_URL}/v1/wallet/${walletId}/withdraw`, JSON.stringify({ amount: 10 }), params);
+  const res = http.post(
+    `${BASE_URL}/v1/wallet/${walletId}/withdraw`,
+    JSON.stringify({ amount: 10 }),
+    withdrawParams,
+  );
   
   check(res, {
     'status is 200': (r) => r.status === 200,
@@ -94,16 +101,40 @@ export function concurrent_transfers() {
   const id = __VU * 100 + __ITER;
   const senderId = `sender-${id}`;
   const receiverId = `receiver-${id}`;
-  const params = { headers: { 'Content-Type': 'application/json' } };
+  const fundingParams = {
+    headers: requestHeaders(`k6-transfer-deposit-${id}`),
+  };
+  const transferParams = {
+    headers: requestHeaders(`k6-transfer-${id}`),
+  };
 
   // Setup sender
-  http.post(`${BASE_URL}/v1/wallet/${senderId}/deposit`, JSON.stringify({ amount: 1000 }), params);
+  http.post(
+    `${BASE_URL}/v1/wallet/${senderId}/deposit`,
+    JSON.stringify({ amount: 1000 }),
+    fundingParams,
+  );
 
   // Transfer
   const payload = JSON.stringify({ toWalletId: receiverId, amount: 50 });
-  const res = http.post(`${BASE_URL}/v1/wallet/${senderId}/transfer`, payload, params);
+  const res = http.post(`${BASE_URL}/v1/wallet/${senderId}/transfer`, payload, transferParams);
 
   check(res, {
     'status is 200': (r) => r.status === 200,
   });
+}
+
+function requestHeaders(requestId) {
+  return {
+    'Content-Type': 'application/json',
+    'x-request-id': requestId,
+    'x-forwarded-for': clientIp(__VU, __ITER),
+  };
+}
+
+function clientIp(vu, iter) {
+  const a = 10 + (vu % 200);
+  const b = Math.floor(iter / 250) % 255;
+  const c = (iter % 250) + 1;
+  return `10.${a}.${b}.${c}`;
 }
