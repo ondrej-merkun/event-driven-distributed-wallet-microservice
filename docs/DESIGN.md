@@ -110,8 +110,8 @@ await db.transaction(async () => {
 ```
 
 **Implementation**:
-- `OutboxEvent` entity: Stores unpublished events
-- `OutboxRelayService`: Cron job (every 5s) publishes events
+- [`OutboxEvent` entity](../src/domain/entities/outbox-event.entity.ts): Stores unpublished events
+- [`OutboxRelayService`](../src/infrastructure/messaging/outbox-relay.service.ts): Cron job (every 5s) publishes events
 - **Guarantee**: If transaction commits, event **will** eventually be published
 
 **Benefits**:
@@ -161,13 +161,13 @@ await db.transaction(async () => {
 
 **Key Implementation Details**:
 
-1. **State Machine** (`TransferSaga` entity):
+1. **State Machine** ([`TransferSaga` entity](../src/modules/transfer/entities/transfer-saga.entity.ts)):
    ```
    PENDING → DEBITED → COMPLETED (success)
                     └→ COMPENSATED → FAILED (failure)
    ```
 
-2. **Pessimistic Locking** (`TransferSagaService`):
+2. **Pessimistic Locking** ([`TransferSagaService`](../src/modules/transfer/services/transfer-saga.service.ts)):
    ```typescript
    await queryRunner.manager.findOne(Wallet, {
      where: { id: fromWalletId },
@@ -177,7 +177,9 @@ await db.transaction(async () => {
 
 3. **Deadlock Prevention**: Locks acquired in consistent order (sender before receiver)
 
-4. **Saga Recovery Service**: Cron job detects stuck sagas (>30s) and completes/fails them
+4. **Saga Recovery Service**: Cron job in [`SagaRecoveryService`](../src/workers/saga-recovery.service.ts) scans every 10 seconds for stale `DEBITED` sagas older than the configured stuck threshold (60 seconds by default)
+
+5. **Lifecycle Event Delivery**: `TRANSFER_INITIATED` and `TRANSFER_COMPLETED` are queued through the transactional outbox so broker publish failures cannot rewrite committed saga state
 
 **Benefits**:
 - Clear state tracking (saga table is audit log)
@@ -509,7 +511,7 @@ stateDiagram-v2
 
 **Success Scenario**:
 ```typescript
-// 1. Create saga record
+// 1. Create saga record and enqueue lifecycle event
 const saga = new TransferSaga({ 
   fromWalletId: 'alice',
   toWalletId: 'bob', 
@@ -517,6 +519,10 @@ const saga = new TransferSaga({
   state: 'PENDING'
 });
 await sagaRepo.save(saga);
+await outboxRepo.save({
+  type: 'TRANSFER_INITIATED',
+  sagaId: saga.id
+});
 
 // 2. Debit sender (ACID transaction)
 await walletService.withdraw('alice', 100, saga.id);
@@ -528,7 +534,7 @@ await walletService.deposit('bob', 100, saga.id);
 saga.state = 'COMPLETED';
 await sagaRepo.save(saga);
 
-// 4. Publish success event
+// 4. Queue success event
 await outboxRepo.save({ 
   type: 'TRANSFER_COMPLETED', 
   sagaId: saga.id 
@@ -558,38 +564,27 @@ try {
 
 **Problem**: What if application crashes mid-saga?
 
-**Solution**: `SagaRecoveryService` cron job (every 30s):
+**Solution**: [`SagaRecoveryService`](../src/workers/saga-recovery.service.ts) cron job (every 10s) that scans for stale `DEBITED` sagas older than the configured stuck threshold:
 
 ```typescript
-@Cron(CronExpression.EVERY_30_SECONDS)
+@Cron(CronExpression.EVERY_10_SECONDS)
 async recoverStuckSagas() {
-  const threshold = new Date(Date.now() - 30_000); // 30s ago
-  
-  // Find sagas stuck in intermediate states
+  const threshold = new Date(Date.now() - configService.sagaStuckThreshold);
+
   const stuckSagas = await sagaRepo.find({
-    where: [
-      { state: 'PENDING', createdAt: LessThan(threshold) },
-      { state: 'DEBITED', updatedAt: LessThan(threshold) }
-    ]
+    where: { state: 'DEBITED', updatedAt: LessThan(threshold) }
   });
-  
+
   for (const saga of stuckSagas) {
-    if (saga.state === 'DEBITED') {
-      // Complete or compensate
-      await this.completeSaga(saga);
-    } else {
-      // Mark as failed
-      saga.state = 'FAILED';
-      await sagaRepo.save(saga);
-    }
+    await transferSagaService.recoverSaga(saga.id);
   }
 }
 ```
 
 **Recovery Guarantees**:
-- No saga stuck forever
-- Max stuck time: 30 seconds
-- Idempotent recovery (safe to run multiple times)
+- Stale `DEBITED` sagas are retried automatically
+- Recovery is idempotent at the service layer
+- Broker publish failures during recovery do not rewrite a completed saga to `FAILED`
 
 ---
 
@@ -597,31 +592,28 @@ async recoverStuckSagas() {
 
 ### Test Pyramid
 
-The testing strategy follows the pyramid principle with a strong foundation of unit tests, supported by integration tests and end-to-end scenarios.
+The testing strategy follows the pyramid principle with unit tests at the base, infrastructure-focused integration tests in the middle, and API/stress scenarios above them.
 
-- **E2E Tests**: 13 tests (integration + E2E)
-- **Unit Tests**: 28 tests (domain logic)
-- **Property-Based Tests**: 2 tests (invariants)
-
-**Total**: 41 tests, 100% passing
+See [`docs/TESTING.md`](./TESTING.md) for the current file inventory and suite responsibilities.
 
 ### Test Categories
 
-#### 1. Unit Tests (28 tests)
+#### 1. Unit Tests
 
 - **Wallet Entity**: Validates core business logic like negative balance prevention, daily withdrawal limits, and state transitions.
+- **Transfer Saga Service Regression**: Covers broker publish failures after saga creation and completion commits.
 - **Fraud Detection Consumer**: Tests event processing, alert generation logic, and DLQ routing.
 
-#### 2. Property-Based Testing (2 tests)
+#### 2. Property-Based Testing
 
 Uses `fast-check` library to test invariants (e.g., "balance never goes negative") across thousands of random operation sequences. This helps catch edge cases that manual test cases might miss.
 
-#### 3. Integration Tests (9 tests)
+#### 3. Integration Tests
 
-- **Saga Recovery**: Verifies that stuck sagas (e.g., in DEBITED state) are correctly recovered or compensated by the cron job.
+- **Saga Recovery**: Verifies that stale `DEBITED` sagas are resumed and that other saga states are ignored by the recovery scanner.
 - **Outbox Relay**: Tests the transactional outbox pattern, ensuring events are batched and relayed to RabbitMQ correctly.
 
-#### 4. End-to-End Tests (included in 9 integration tests)
+#### 4. End-to-End Tests
 
 - **Concurrency Testing**: Validates atomicity under high load (e.g., 1000 concurrent deposits).
 - **Reliability Testing**: Tests complex scenarios like bidirectional concurrent transfers to ensure no deadlocks or data corruption occurs.
@@ -843,8 +835,8 @@ The project enforces a minimum of **80% coverage** across branches, functions, l
    - **Mitigation**: Client-side backoff, consider sharding "hot" wallets
 
 3. **Saga Recovery Latency**
-   - **Worst Case**: Saga stuck for 30 seconds (cron interval)
-   - **Typical**: <5 seconds (recovered on next cron run)
+   - **Worst Case with defaults**: roughly the 60-second stuck threshold plus the next 10-second poll
+   - **Typical after threshold**: recovered on the next cron run
 
 ### Scaling Strategy
 

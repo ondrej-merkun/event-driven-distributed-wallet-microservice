@@ -1,15 +1,16 @@
 # Testing
 
-This document outlines the testing approach for the wallet microservice. The test suite covers unit tests, integration tests, end-to-end scenarios, and load testing.
+This document describes the test inventory that currently exists in the repository and how each layer is used.
 
 ## Test Structure
 
-Tests are organized into four layers:
+The suite is split into five layers:
 
-1. **Unit Tests** - Domain logic and business rules
-2. **Integration Tests** - Infrastructure components (outbox relay, saga recovery)
-3. **E2E Tests** - Full system behavior with real database/Redis
-4. **Load Tests** - Performance validation using Artillery and k6
+1. **Unit tests** for domain logic and focused service regressions
+2. **Integration tests** for infrastructure and cross-module behavior
+3. **API E2E tests** for the main Nest application bootstrap used in tests
+4. **Stress tests** for correctness under concurrency and failure
+5. **Load tests** for throughput and latency
 
 ---
 
@@ -18,166 +19,139 @@ Tests are organized into four layers:
 ### Wallet Entity
 `src/modules/wallet/entities/wallet.entity.spec.ts`
 
-Tests core wallet operations:
-- Deposits and withdrawals
-- Insufficient funds handling
-- wallet state transitions (active, frozen, closed)
-- Daily withdrawal limits
+Validates wallet business rules such as deposits, withdrawals, insufficient funds, and wallet status transitions.
 
-### Property-Based Testing
+### Wallet Property Tests
 `src/modules/wallet/entities/wallet.entity.property.spec.ts`
 
-Uses fast-check to fuzz wallet operations and verify invariants hold across arbitrary sequences. Helps catch edge cases that manual tests might miss.
+Uses `fast-check` to exercise wallet invariants across arbitrary operation sequences.
 
-### Fraud Detection Consumer
-`src/workers/consumers/fraud-detection.consumer.spec.ts`
-
-Tests event processing and alert generation logic.
-
-### Transfer Saga
+### Transfer Saga Entity
 `src/modules/transfer/entities/transfer-saga.entity.spec.ts`
 
-Tests state machine transitions (PENDING → DEBITED → COMPLETED/COMPENSATED).
+Checks the transfer saga state machine and terminal-state metadata behavior.
 
 ### Transfer Saga Property Tests
 `src/modules/transfer/entities/transfer-saga.entity.property.spec.ts`
 
-Verifies invariants:
-- State transitions are monotonic (cannot go back to PENDING)
-- Saga cannot be in multiple terminal states
-- Metadata consistency for failure/compensation reasons
+Verifies monotonic state transitions and other saga invariants.
+
+### Transfer Saga Service Regression
+`src/modules/transfer/services/transfer-saga.service.spec.ts`
+
+Covers the broker-failure regression fixed in issue #1:
+- `TRANSFER_INITIATED` publish failure after the create transaction commits
+- `TRANSFER_COMPLETED` publish failure after funds move
+- terminal saga state remains `COMPLETED` after post-commit publish errors
+
+### Transaction Manager Regression
+`src/infrastructure/database/transaction-manager.service.spec.ts`
+
+Covers the outbox reliability change by verifying transactional event persistence without direct broker publication.
+
+### Outbox Relay Regression
+`src/infrastructure/messaging/outbox-relay.service.spec.ts`
+
+Checks Redis lock behavior around relay polling so concurrent relay executions do not publish the same batch twice.
+
+### Fraud Detection Consumer
+`src/workers/consumers/fraud-detection.consumer.spec.ts`
+
+Tests fraud event handling and alert-generation behavior.
 
 ---
 
 ## Integration Tests
 
+### Transaction Manager
+`test/integration/transaction-manager.integration.spec.ts`
+
+Validates transactional execution, outbox persistence, and Redis lock behavior.
+
 ### Outbox Relay
 `test/integration/outbox-relay.integration.spec.ts`
 
-Tests the transactional outbox pattern:
-- Events persisted atomically with business state
-- Relay to RabbitMQ with at-least-once delivery
-- Handling message broker failures
-- Duplicate event detection
+Checks relay batching and concurrent cron execution behavior for unpublished outbox rows.
 
 ### Saga Recovery
 `test/integration/saga-recovery.integration.spec.ts`
 
-Tests saga state machine transitions:
-- Recovery of stuck sagas (e.g., DEBITED → COMPLETED)
-- Compensation logic for failed transfers
-- Timeout handling and retry strategies
+Exercises the current recovery implementation:
+- stale `DEBITED` sagas are resumed
+- stale non-`DEBITED` sagas are ignored
+- recently updated `DEBITED` sagas are ignored
+- concurrent manual recovery triggers do not double-credit
 
----
-
-## E2E Tests
-
-All E2E tests run against real Postgres + Redis instances.
-
-### Core Wallet Operations
-`test/e2e/wallet.e2e-spec.ts` (314 lines)
-
-**Basic operations:**
-- Create wallet, deposit, withdraw, get balance
-- Transaction history with pagination
-- Input validation (negative amounts, etc.)
-
-**Idempotency:**
-- Duplicate deposit requests return cached results
-- Duplicate transfer requests prevent double-debit
-- Uses Redis distributed locks (SETNX pattern)
-
-**Transfers:**
-- Happy path: debit sender, credit receiver
-- Bidirectional transfers (A→B and B→A concurrently)
-- Insufficient funds handling
-
-**Concurrency:**
-- Concurrent withdrawals on same wallet (only one succeeds)
-- 100+ concurrent deposits to different wallets
-- Balance correctness under load
+The integration suite calls `processStuckSagas()` directly because the cron wrapper is skipped in `NODE_ENV=test`.
 
 ### Reliability
-`test/e2e/reliability.e2e-spec.ts`
+`test/integration/reliability.integration.spec.ts`
 
-**Saga recovery scenario:**
-Simulates a pod crash after debit but before credit by manually inserting a saga in DEBITED state. The saga recovery service should detect and complete it.
-
-This validates the system can recover from mid-flight failures without losing money.
-
-### Advanced Concurrency
-`test/e2e/advanced-concurrency.e2e-spec.ts`
-
-**Idempotency race condition:**
-10 concurrent requests with the same Request-ID. Only one should execute; others return 409 Conflict or cached result. Tests Redis lock implementation.
-
-**Deadlock prevention:**
-10 bidirectional transfers (A→B, B→A) running simultaneously. Alphabetical wallet ID ordering prevents circular wait. All transfers should complete successfully.
-
-### Chaos Engineering
-`test/e2e/chaos.e2e-spec.ts` (262 lines)
-
-Tests system behavior under failure conditions:
-
-**Database resilience:**
-- Serialization conflict handling with retries
-- Transaction rollback on failures
-- Saga compensation
-
-**Consistency under failure:**
-- Total balance across wallets remains constant even if sagas fail
-- 50 concurrent withdrawals - balance never goes negative
-- No money creation or loss
-
-**Idempotency under chaos:**
-- Multiple duplicate requests during simulated network issues
-- Balance increases only once despite retries
-
-**Saga recovery under stress:**
-- Multiple concurrent transfers
-- All sagas eventually reach terminal state
-
-### Exception Handling
-`test/e2e/exception-filters.e2e-spec.ts`
-
-Validates HTTP semantics:
-- 400 for validation errors
-- 404 for missing resources
-- 422 for business rule violations
-- 500 for server errors
-- All error responses include correlation IDs
+Uses the shared test app to simulate a transfer stuck in `DEBITED` and verifies that manual recovery completes it.
 
 ### Rate Limiting
 `test/integration/rate-limiting.integration.spec.ts`
 
-Tests Redis-based rate limiting:
-- Per-client/IP limits enforced
-- 429 responses after threshold exceeded
+Checks throttler responses, headers, and request limiting behavior against the current app bootstrap, including per-client/IP limiting.
 
-### Health Checks
-`test/e2e/health.e2e-spec.ts`
+### Exception Filters
+`test/integration/exception-filters.integration.spec.ts`
 
-Validates `/v1/health` endpoint for k8s probes:
-- Database connectivity
-- Concurrent request handling
+Validates HTTP error semantics and response formatting for business and validation errors.
+
+### Wallet Caching
+`test/integration/wallet.caching.integration.spec.ts`
+
+Checks Redis-backed balance cache reads and cache updates after wallet mutations.
 
 ### Event Immutability
 `test/integration/event-immutability.integration.spec.ts`
 
-Verifies database triggers prevent UPDATE/DELETE on `wallet_events` table. Ensures audit trail can't be tampered with.
+Verifies that persisted `wallet_events` rows cannot be updated or deleted.
 
 ---
 
-## Load Testing
+## API E2E Tests
 
-### Artillery Suite
+### Wallet API
+`test/e2e/wallet.e2e-spec.ts`
+
+Exercises the current API test bootstrap for deposits, withdrawals, transfers, idempotency, and history queries.
+
+### Health Endpoint
+`test/e2e/health.e2e-spec.ts`
+
+Checks the versioned `/v1/health` endpoint exposed by the current test bootstrap and validates database health details.
+
+### Worker Boot
+`test/e2e/worker.e2e-spec.ts`
+
+Confirms the worker module compiles successfully.
+
+---
+
+## Stress Tests
+
+### Concurrency
+`test/stress/concurrency.stress-spec.ts`
+
+Focuses on correctness under concurrent request races:
+- same-request-id idempotency
+- bidirectional transfer contention
+
+### Chaos
+`test/stress/chaos.stress-spec.ts`
+
+Exercises compensation, data consistency, idempotency under retries, and recovery behavior under failure.
+
+---
+
+## Load Tests
+
+### Artillery Scenario
 `test/load/load-test.yml`
 
-Mixed traffic profile covering:
-- Deposits
-- Withdrawals
-- Transfers
-- Balance checks
+Provides a mixed traffic profile covering deposits, withdrawals, transfers, and balance checks.
 
 Uses `test/load/load-test.processor.js` to generate stable wallet IDs, numeric payloads, request IDs, and forwarded client IPs.
 
@@ -186,26 +160,17 @@ Run with:
 npm run test:load
 ```
 
-### k6 Suite
+### k6 Script
 `test/load-test.k6.js`
 
-Three scenarios running concurrently:
+Runs deposit, same-wallet, and transfer scenarios with latency thresholds.
 
-**1. Concurrent deposits** (20 VUs, 1000 shared iterations)
-- Different wallets, minimal contention
-- Tests overall throughput
-
-**2. Same wallet operations** (10 VUs, 100 shared iterations)
-- High contention on single wallet
-- Tests pessimistic locking performance
-
-**3. Concurrent transfers** (10 VUs, 50 shared iterations)
-- Full saga orchestration under load
-- Tests distributed transaction throughput
-
-**Performance thresholds:**
-- Error rate < 1%
-- p95 latency < 500ms
+- Concurrent deposits: 20 VUs, 1000 shared iterations
+- Same wallet operations: 10 VUs, 100 shared iterations
+- Concurrent transfers: 10 VUs, 50 shared iterations
+- Performance thresholds:
+  - Error rate < 1%
+  - p95 latency < 500ms
 
 Run with:
 ```bash
@@ -213,73 +178,48 @@ npm run test:load:k6
 ```
 
 ---
-### Docker Test Execution (Recommended for Accuracy)
 
-While `npm` commands are faster for local development loops, running tests via Docker ensures the environment matches production exactly (Node version, OS dependencies, network latency).
+## Running Tests
 
 ```bash
-# Run all tests in Docker
-docker-compose run --rm test
-
-# Run specific suite
-docker-compose run --rm test npm run test:e2e:stress
+npm run test
+npm run test:integration
+npm run test:e2e
+npm run test:stress
+npm run test:load
+npm run test:load:k6
 ```
 
-## Npm Test Execution
+For faster local loops:
 
-The test suite has three modes based on Jest configs:
-
-### Quick (CI)
 ```bash
 npm run test:e2e:quick
 ```
-Reduced iterations for fast feedback. ~2-5 minutes.
 
-### Standard
-```bash
-npm run test:e2e
-```
-Full coverage. ~10-15 minutes. Run before merging.
+For the highest-stress API scenario:
 
-### Stress
 ```bash
 npm run test:e2e:stress
 ```
-Maximum concurrency and chaos scenarios. ~30 minutes. Run before deployments.
 
-### Other commands
-```bash
-npm run test              # Unit tests
-npm run test:integration  # Integration tests
-npm run test:load         # Artillery load tests
-npm run test:load:k6      # k6 load tests
-```
 ---
 
 ## Test Infrastructure
 
-### Shared Test App
+### Shared App Bootstrap
 `test/shared/shared-test-app.ts`
 
-Single NestJS app instance reused across all E2E tests for faster execution. Database is isolated via `TRUNCATE` in `beforeEach` hooks.
+Provides a reusable Nest application and data source for integration and stress suites. It also exposes helpers for stopping cron jobs during tests and applies the same versioning and validation bootstrap behavior used by the API service.
 
-### Setup
+### Global Jest Setup
 `test/setup.ts`
 
-Configures Postgres with SERIALIZABLE isolation level and Redis for distributed locks.
+Sets a longer default Jest timeout and installs `crypto.webcrypto` on `global.crypto` for Node.js 22 compatibility.
 
 ---
 
-## Coverage
+## Environment Notes
 
-The test suite includes:
-- 40+ E2E scenarios
-- 8 chaos/failure scenarios
-- Concurrency tests up to 100 parallel operations
-- All saga state transitions covered
-
-## TODO
-
-- Add contract testing (Pact) if we expose this as an API to other services
-- Consider mutation testing (Stryker) to validate test quality
-- More comprehensive fraud detection scenarios
+- Integration, API E2E, and stress suites need the application environment variables required by `AppConfigService`.
+- Suites that boot the app also require the backing services they use, typically PostgreSQL, Redis, and RabbitMQ.
+- Some focused regression checks can still be validated with direct Jest runs or TypeScript compilation when the full environment is unavailable.
