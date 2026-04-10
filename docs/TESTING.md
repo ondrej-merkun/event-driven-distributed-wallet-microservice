@@ -44,6 +44,16 @@ Covers the broker-failure regression fixed in issue #1:
 - `TRANSFER_COMPLETED` publish failure after funds move
 - terminal saga state remains `COMPLETED` after post-commit publish errors
 
+### Transaction Manager Regression
+`src/infrastructure/database/transaction-manager.service.spec.ts`
+
+Covers the outbox reliability change by verifying transactional event persistence without direct broker publication.
+
+### Outbox Relay Regression
+`src/infrastructure/messaging/outbox-relay.service.spec.ts`
+
+Checks Redis lock behavior around relay polling so concurrent relay executions do not publish the same batch twice.
+
 ### Fraud Detection Consumer
 `src/workers/consumers/fraud-detection.consumer.spec.ts`
 
@@ -82,7 +92,7 @@ Uses the shared test app to simulate a transfer stuck in `DEBITED` and verifies 
 ### Rate Limiting
 `test/integration/rate-limiting.integration.spec.ts`
 
-Checks throttler responses, headers, and request limiting behavior against the current app bootstrap.
+Checks throttler responses, headers, and request limiting behavior against the current app bootstrap, including per-client/IP limiting.
 
 ### Exception Filters
 `test/integration/exception-filters.integration.spec.ts`
@@ -111,7 +121,7 @@ Exercises the current API test bootstrap for deposits, withdrawals, transfers, i
 ### Health Endpoint
 `test/e2e/health.e2e-spec.ts`
 
-Checks the health endpoint exposed by the current test bootstrap and validates database health details.
+Checks the versioned `/v1/health` endpoint exposed by the current test bootstrap and validates database health details.
 
 ### Worker Boot
 `test/e2e/worker.e2e-spec.ts`
@@ -138,15 +148,34 @@ Exercises compensation, data consistency, idempotency under retries, and recover
 
 ## Load Tests
 
+### Artillery Scenario
+`test/load/load-test.yml`
+
+Provides a mixed traffic profile covering deposits, withdrawals, transfers, and balance checks.
+
+Uses `test/load/load-test.processor.js` to generate stable wallet IDs, numeric payloads, request IDs, and forwarded client IPs.
+
+Run with:
+```bash
+npm run test:load
+```
+
 ### k6 Script
 `test/load-test.k6.js`
 
 Runs deposit, same-wallet, and transfer scenarios with latency thresholds.
 
-### Artillery Scenario
-`test/load/load-test.yml`
+- Concurrent deposits: 20 VUs, 1000 shared iterations
+- Same wallet operations: 10 VUs, 100 shared iterations
+- Concurrent transfers: 10 VUs, 50 shared iterations
+- Performance thresholds:
+  - Error rate < 1%
+  - p95 latency < 500ms
 
-Provides an additional scripted load scenario.
+Run with:
+```bash
+npm run test:load:k6
+```
 
 ---
 
@@ -158,6 +187,7 @@ npm run test:integration
 npm run test:e2e
 npm run test:stress
 npm run test:load
+npm run test:load:k6
 ```
 
 For faster local loops:
@@ -179,7 +209,7 @@ npm run test:e2e:stress
 ### Shared App Bootstrap
 `test/shared/shared-test-app.ts`
 
-Provides a reusable Nest application and data source for integration and stress suites. It also exposes helpers for stopping cron jobs during tests.
+Provides a reusable Nest application and data source for integration and stress suites. It also exposes helpers for stopping cron jobs during tests and applies the same versioning and validation bootstrap behavior used by the API service.
 
 ### Global Jest Setup
 `test/setup.ts`

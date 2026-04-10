@@ -6,6 +6,7 @@ import { AppConfigService } from '../../src/config/app-config.service';
 import { TransferSaga, TransferSagaState } from '../../src/modules/transfer/entities/transfer-saga.entity';
 import { TransferSagaRepository } from '../../src/modules/transfer/repositories/transfer-saga.repository';
 import { Wallet } from '../../src/modules/wallet/entities/wallet.entity';
+import { configureTestApp } from '../shared/shared-test-app';
 import { SagaRecoveryService } from '../../src/workers/saga-recovery.service';
 
 describe('SagaRecovery Integration Tests', () => {
@@ -21,6 +22,7 @@ describe('SagaRecovery Integration Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureTestApp(app);
     await app.init();
 
     dataSource = moduleFixture.get<DataSource>(DataSource);

@@ -3,7 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import Redis from 'ioredis';
 import { AppModule } from '@src/app.module';
-import { stopCronJobs } from '../shared/shared-test-app';
+import { configureTestApp, stopCronJobs } from '../shared/shared-test-app';
 
 describe('Rate Limiting Integration Tests', () => {
   let app: INestApplication;
@@ -15,6 +15,7 @@ describe('Rate Limiting Integration Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureTestApp(app);
     await app.init();
     stopCronJobs(app);
     
@@ -39,7 +40,7 @@ describe('Rate Limiting Integration Tests', () => {
       // Make 5 requests (well under the 100/min limit)
       for (let i = 0; i < 5; i++) {
         await request(app.getHttpServer())
-          .get('/health')
+          .get('/v1/health')
           .expect(200);
       }
     });
@@ -55,7 +56,7 @@ describe('Rate Limiting Integration Tests', () => {
         for (let j = 0; j < batchSize && i + j < 101; j++) {
           batch.push(
             request(app.getHttpServer())
-              .post(`/wallet/${testWalletId}/deposit`)
+              .post(`/v1/wallet/${testWalletId}/deposit`)
               .send({ amount: 1 })
           );
         }
@@ -74,7 +75,7 @@ describe('Rate Limiting Integration Tests', () => {
 
     it('should include rate limit headers', async () => {
       const response = await request(app.getHttpServer())
-        .get('/health');
+        .get('/v1/health');
 
       // Throttler adds these headers
       expect(response.headers).toHaveProperty('x-ratelimit-limit');
@@ -90,7 +91,7 @@ describe('Rate Limiting Integration Tests', () => {
       
       // Make some requests
       await request(app.getHttpServer())
-        .post(`/wallet/${testWalletId}/deposit`)
+        .post(`/v1/wallet/${testWalletId}/deposit`)
         .send({ amount: 1 })
         .expect(200);
 
@@ -100,7 +101,7 @@ describe('Rate Limiting Integration Tests', () => {
 
       // Should be able to make requests again
       await request(app.getHttpServer())
-        .post(`/wallet/${testWalletId}/deposit`)
+        .post(`/v1/wallet/${testWalletId}/deposit`)
         .send({ amount: 1 })
         .expect(200);
     }, 70000);
@@ -111,11 +112,11 @@ describe('Rate Limiting Integration Tests', () => {
       // This test assumes different IPs get different limits
       // In real scenarios, this would require proxy configuration
       const response1 = await request(app.getHttpServer())
-        .get('/health')
+        .get('/v1/health')
         .set('X-Forwarded-For', '192.168.1.1');
 
       const response2 = await request(app.getHttpServer())
-        .get('/health')
+        .get('/v1/health')
         .set('X-Forwarded-For', '192.168.1.2');
 
       expect(response1.status).toBe(200);

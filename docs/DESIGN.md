@@ -321,13 +321,13 @@ try {
 **Example**:
 ```bash
 # First request
-curl -X POST /wallet/alice/deposit \
+curl -X POST /v1/wallet/alice/deposit \
   -H "X-Request-ID: 550e8400-e29b-41d4-a716-446655440000" \
   -d '{"amount": 100}'
 → 200 OK, balance updated
 
 # Retry (network timeout)
-curl -X POST /wallet/alice/deposit \
+curl -X POST /v1/wallet/alice/deposit \
   -H "X-Request-ID: 550e8400-e29b-41d4-a716-446655440000" \  # Same ID!
   -d '{"amount": 100}'
 → 200 OK, balance NOT updated (cached response)
@@ -465,7 +465,7 @@ Background Workers (fraud detection)
 
 **Get complete wallet history**:
 ```typescript
-GET /wallet/:id/history
+GET /v1/wallet/:id/history
 
 // Returns:
 [
@@ -620,12 +620,16 @@ Uses `fast-check` library to test invariants (e.g., "balance never goes negative
 
 #### 5. Load Testing
 
-Uses **k6** (formerly Artillery) to simulate production-like traffic:
-- **Concurrent Deposits**: 20 VUs, 1000 iterations
-- **Transfers**: 10 VUs, 50 iterations
+Uses both **Artillery** and **k6** to simulate production-like traffic:
+- **Artillery**: Mixed deposit, withdrawal, transfer, and balance-check traffic from `test/load/load-test.yml`
+- **k6**: Focused scenario runners from `test/load-test.k6.js`
+- **Concurrent Deposits**: 20 VUs, 1000 shared iterations
+- **Transfers**: 10 VUs, 50 shared iterations
 - **Same Wallet Ops**: High contention scenarios
 
-**Run**: `npm run test:load`
+**Run**:
+- `npm run test:load` for the Artillery profile
+- `npm run test:load:k6` for the k6 profile
 
 ### Test Coverage Requirements
 
@@ -886,8 +890,9 @@ await redis.setex(`wallet:${id}:balance`, 60, JSON.stringify(wallet));
 
 ```typescript
 // JWT middleware (not implemented, production-ready example)
+@Controller({ path: 'wallet', version: '1' })
 @UseGuards(JwtAuthGuard)
-@Get('/wallet/:id/balance')
+@Get(':id/balance')
 async getBalance(@Param('id') id: string, @Req() req) {
   // Verify user owns wallet
   if (req.user.walletId !== id) {

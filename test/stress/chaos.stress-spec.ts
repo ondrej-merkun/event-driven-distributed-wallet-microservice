@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '@src/app.module';
 import { TransferSagaService } from '@src/modules/transfer/services/transfer-saga.service';
 import { DataSource } from 'typeorm';
+import { configureTestApp } from '../shared/shared-test-app';
 
 
 
@@ -19,6 +20,7 @@ describe('Chaos Engineering E2E Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureTestApp(app);
     await app.init();
     
     dataSource = moduleFixture.get<DataSource>(DataSource);
@@ -37,14 +39,14 @@ describe('Chaos Engineering E2E Tests', () => {
     it('should handle transaction failures gracefully', async () => {
       // Create wallet
       await request(app.getHttpServer())
-        .post('/wallet/chaos-test-1/deposit')
+        .post('/v1/wallet/chaos-test-1/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Attempt concurrent operations that may cause serialization failures
       const operations = Array(5).fill(null).map((_, i) =>
         request(app.getHttpServer())
-          .post('/wallet/chaos-test-1/withdraw')
+          .post('/v1/wallet/chaos-test-1/withdraw')
           .send({ amount: 5 })
           .set('x-request-id', `chaos-withdraw-${i}`)
       );
@@ -61,7 +63,7 @@ describe('Chaos Engineering E2E Tests', () => {
 
       // Verify final balance is correct
       const balance = await request(app.getHttpServer())
-        .get('/wallet/chaos-test-1')
+        .get('/v1/wallet/chaos-test-1')
         .expect(200);
 
       // Balance should reflect only successful withdrawals
@@ -73,12 +75,12 @@ describe('Chaos Engineering E2E Tests', () => {
     it('should handle saga compensation on failure', async () => {
       // Create two wallets
       await request(app.getHttpServer())
-        .post('/wallet/chaos-sender/deposit')
+        .post('/v1/wallet/chaos-sender/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       await request(app.getHttpServer())
-        .post('/wallet/chaos-receiver/deposit')
+        .post('/v1/wallet/chaos-receiver/deposit')
         .send({ amount: 1 })
         .expect(200);
 
@@ -90,7 +92,7 @@ describe('Chaos Engineering E2E Tests', () => {
       });
 
       const response = await request(app.getHttpServer())
-        .post('/wallet/chaos-sender/transfer')
+        .post('/v1/wallet/chaos-sender/transfer')
         .send({ toWalletId: 'chaos-receiver', amount: 50 })
         .set('x-request-id', 'chaos-transfer-1');
 
@@ -101,11 +103,11 @@ describe('Chaos Engineering E2E Tests', () => {
 
         // Check both balances
         const senderBalance = await request(app.getHttpServer())
-          .get('/wallet/chaos-sender')
+          .get('/v1/wallet/chaos-sender')
           .expect(200);
         
         const receiverBalance = await request(app.getHttpServer())
-          .get('/wallet/chaos-receiver')
+          .get('/v1/wallet/chaos-receiver')
           .expect(200);
 
         expect(senderBalance.body.balance).toBe(100); // Compensated
@@ -118,7 +120,7 @@ describe('Chaos Engineering E2E Tests', () => {
     it.skip('should handle slow database queries', async () => {
       // Create wallet
       await request(app.getHttpServer())
-        .post('/wallet/slow-test/deposit')
+        .post('/v1/wallet/slow-test/deposit')
         .send({ amount: 100 })
         .expect(200);
 
@@ -132,7 +134,7 @@ describe('Chaos Engineering E2E Tests', () => {
 
       // Operation should still succeed
       await request(app.getHttpServer())
-        .post('/wallet/slow-test/withdraw')
+        .post('/v1/wallet/slow-test/withdraw')
         .send({ amount: 10 })
         .expect(200);
     });
@@ -141,28 +143,28 @@ describe('Chaos Engineering E2E Tests', () => {
   describe('Data Consistency Under Failure', () => {
     it('should maintain data consistency even if saga fails mid-flight', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/consistency-1/deposit')
+        .post('/v1/wallet/consistency-1/deposit')
         .send({ amount: 200 })
         .expect(200);
 
       await request(app.getHttpServer())
-        .post('/wallet/consistency-2/deposit')
+        .post('/v1/wallet/consistency-2/deposit')
         .send({ amount: 1 })
         .expect(200);
 
       // Initiate transfer
       await request(app.getHttpServer())
-        .post('/wallet/consistency-1/transfer')
+        .post('/v1/wallet/consistency-1/transfer')
         .send({ toWalletId: 'consistency-2', amount: 100 })
         .set('x-request-id', 'consistency-test-1');
 
       // Regardless of success/failure, balances should be consistent
       const balance1 = await request(app.getHttpServer())
-        .get('/wallet/consistency-1')
+        .get('/v1/wallet/consistency-1')
         .expect(200);
       
       const balance2 = await request(app.getHttpServer())
-        .get('/wallet/consistency-2')
+        .get('/v1/wallet/consistency-2')
         .expect(200);
 
       const totalBalance = balance1.body.balance + balance2.body.balance;
@@ -174,14 +176,14 @@ describe('Chaos Engineering E2E Tests', () => {
     it('should not lose money even under extreme concurrency', async () => {
       // Create wallet with initial balance
       await request(app.getHttpServer())
-        .post('/wallet/extreme-test/deposit')
+        .post('/v1/wallet/extreme-test/deposit')
         .send({ amount: 1000 })
         .expect(200);
 
       // Bombard with concurrent withdrawals
       const withdrawals = Array(20).fill(null).map((_, i) =>
         request(app.getHttpServer())
-          .post('/wallet/extreme-test/withdraw')
+          .post('/v1/wallet/extreme-test/withdraw')
           .send({ amount: 10 })
           .set('x-request-id', `extreme-${i}`)
       );
@@ -190,7 +192,7 @@ describe('Chaos Engineering E2E Tests', () => {
 
       // Check final balance
       const finalBalance = await request(app.getHttpServer())
-        .get('/wallet/extreme-test')
+        .get('/v1/wallet/extreme-test')
         .expect(200);
 
       // Balance should never go negative or exceed initial amount
@@ -202,7 +204,7 @@ describe('Chaos Engineering E2E Tests', () => {
   describe('Idempotency Under Chaos', () => {
     it('should handle duplicate requests during network issues', async () => {
       await request(app.getHttpServer())
-        .post('/wallet/idempotent-chaos/deposit')
+        .post('/v1/wallet/idempotent-chaos/deposit')
         .send({ amount: 100 })
         .set('x-request-id', 'chaos-idempotent-1')
         .expect(200);
@@ -210,7 +212,7 @@ describe('Chaos Engineering E2E Tests', () => {
       // Send exact same request multiple times (simulating client retries)
       const duplicates = Array(5).fill(null).map(() =>
         request(app.getHttpServer())
-          .post('/wallet/idempotent-chaos/deposit')
+          .post('/v1/wallet/idempotent-chaos/deposit')
           .send({ amount: 100 })
           .set('x-request-id', 'chaos-idempotent-1')
       );
@@ -219,7 +221,7 @@ describe('Chaos Engineering E2E Tests', () => {
 
       // Balance should only increase once
       const balance = await request(app.getHttpServer())
-        .get('/wallet/idempotent-chaos')
+        .get('/v1/wallet/idempotent-chaos')
         .expect(200);
 
       // expect(balance.body.balance).toBe(100);
@@ -231,13 +233,13 @@ describe('Chaos Engineering E2E Tests', () => {
     it('should recover all stuck sagas eventually', async () => {
       // Create multiple transfers that might get stuck
       await request(app.getHttpServer())
-        .post('/wallet/recovery-1/deposit')
+        .post('/v1/wallet/recovery-1/deposit')
         .send({ amount: 500 })
         .expect(200);
 
       for (let i = 0; i < 5; i++) {
         await request(app.getHttpServer())
-          .post(`/wallet/recovery-target-${i}/deposit`)
+          .post(`/v1/wallet/recovery-target-${i}/deposit`)
           .send({ amount: 1 })
           .expect(200);
       }
@@ -247,7 +249,7 @@ describe('Chaos Engineering E2E Tests', () => {
       for (let i = 0; i < 5; i++) {
         transfers.push(
           request(app.getHttpServer())
-            .post('/wallet/recovery-1/transfer')
+            .post('/v1/wallet/recovery-1/transfer')
             .send({ toWalletId: `recovery-target-${i}`, amount: 50 })
             .set('x-request-id', `recovery-${i}`)
         );
@@ -291,4 +293,3 @@ describe('Chaos Engineering E2E Tests', () => {
     }, 10000);
   });
 });
-

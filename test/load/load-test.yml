@@ -1,5 +1,6 @@
 config:
   target: "http://localhost:3000"
+  processor: "./load-test.processor.js"
   phases:
     # Warm-up phase
     - duration: 10
@@ -34,62 +35,48 @@ scenarios:
   # Scenario 1: Deposit operations
   - name: "Deposit Flow"
     weight: 40
+    beforeScenario: "initDepositFlow"
     flow:
       - post:
-          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
-          json:
-            amount: "{{ $randomNumber(10, 1000) }}"
-          headers:
-            x-request-id: "load-deposit-{{ $uuid() }}"
-          capture:
-            - json: "$.balance"
-              as: "balance"
+          url: "/v1/wallet/{{ walletId }}/deposit"
+          beforeRequest: "prepareDepositRequest"
       - think: 1
 
   # Scenario 2: Withdrawal operations
   - name: "Withdrawal Flow"
     weight: 30
+    beforeScenario: "initWithdrawalFlow"
     flow:
       - post:
-          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/deposit"
-          json:
-            amount: 500
-          headers:
-            x-request-id: "load-deposit-{{ $uuid() }}"
+          url: "/v1/wallet/{{ walletId }}/deposit"
+          beforeRequest: "prepareWithdrawalFundingRequest"
       - post:
-          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}/withdraw"
-          json:
-            amount: "{{ $randomNumber(10, 100) }}"
-          headers:
-            x-request-id: "load-withdraw-{{ $uuid() }}"
+          url: "/v1/wallet/{{ walletId }}/withdraw"
+          beforeRequest: "prepareWithdrawalRequest"
       - think: 1
 
   # Scenario 3: Transfer operations
   - name: "Transfer Flow"
     weight: 20
+    beforeScenario: "initTransferFlow"
     flow:
       - post:
-          url: "/v1/wallet/sender-{{ $randomNumber(1, 500) }}/deposit"
-          json:
-            amount: 1000
-          headers:
-            x-request-id: "load-deposit-sender-{{ $uuid() }}"
+          url: "/v1/wallet/{{ senderId }}/deposit"
+          beforeRequest: "prepareTransferFundingRequest"
       - post:
-          url: "/v1/wallet/sender-{{ $randomNumber(1, 500) }}/transfer"
-          json:
-            toWalletId: "receiver-{{ $randomNumber(1, 500) }}"
-            amount: "{{ $randomNumber(10, 100) }}"
-          headers:
-            x-request-id: "load-transfer-{{ $uuid() }}"
+          url: "/v1/wallet/{{ senderId }}/transfer"
+          beforeRequest: "prepareTransferRequest"
       - think: 2
 
   # Scenario 4: Read operations (balance checks)
   - name: "Balance Check Flow"
     weight: 10
+    beforeScenario: "initBalanceCheckFlow"
     flow:
       - get:
-          url: "/v1/wallet/user-{{ $randomNumber(1, 1000) }}"
-      - think: 0.5
+          url: "/v1/wallet/{{ walletId }}"
+          beforeRequest: "prepareBalanceCheckRequest"
+      - think: 1
 
 # Performance thresholds
 ensure:

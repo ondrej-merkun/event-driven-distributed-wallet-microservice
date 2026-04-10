@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '@src/app.module';
 import { DataSource } from 'typeorm';
+import { configureTestApp } from '../shared/shared-test-app';
 
 describe('Exception Filters E2E Tests', () => {
   let app: INestApplication;
@@ -14,7 +15,7 @@ describe('Exception Filters E2E Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ transform: true }));
+    configureTestApp(app);
     await app.init();
     
     dataSource = moduleFixture.get<DataSource>(DataSource);
@@ -35,13 +36,13 @@ describe('Exception Filters E2E Tests', () => {
       
       // Deposit some funds
       await request(app.getHttpServer())
-        .post(`/wallet/${walletId}/deposit`)
+        .post(`/v1/wallet/${walletId}/deposit`)
         .send({ amount: 50 })
         .expect(200);
 
       // Try to withdraw more than available
       const response = await request(app.getHttpServer())
-        .post(`/wallet/${walletId}/withdraw`)
+        .post(`/v1/wallet/${walletId}/withdraw`)
         .send({ amount: 100 })
         .expect(422);
 
@@ -55,7 +56,7 @@ describe('Exception Filters E2E Tests', () => {
 
     it('should return 422 for InvalidAmountError (negative)', async () => {
       const response = await request(app.getHttpServer())
-        .post('/wallet/test-negative/deposit')
+        .post('/v1/wallet/test-negative/deposit')
         .send({ amount: -100 })
         .expect(400);
 
@@ -68,7 +69,7 @@ describe('Exception Filters E2E Tests', () => {
 
     it('should return 422 for InvalidAmountError (zero)', async () => {
       const response = await request(app.getHttpServer())
-        .post('/wallet/test-zero/deposit')
+        .post('/v1/wallet/test-zero/deposit')
         .send({ amount: 0 })
         .expect(400);
 
@@ -79,13 +80,13 @@ describe('Exception Filters E2E Tests', () => {
       // This test assumes currency validation exists
       // Create wallets with different currencies
       await request(app.getHttpServer())
-        .post('/wallet/usd-wallet/deposit')
+        .post('/v1/wallet/usd-wallet/deposit')
         .send({ amount: 100 })
         .expect(200);
 
       // Try transfer (currency mismatch will be caught by saga)
       await request(app.getHttpServer())
-        .post('/wallet/usd-wallet/transfer')
+        .post('/v1/wallet/usd-wallet/transfer')
         .send({ toWalletId: 'eur-wallet', amount: 50 })
         .expect((res) => {
           // Could be 422 or 200 depending on when currency check happens
@@ -98,19 +99,19 @@ describe('Exception Filters E2E Tests', () => {
       
       // Deposit funds
       await request(app.getHttpServer())
-        .post(`/wallet/${walletId}/deposit`)
+        .post(`/v1/wallet/${walletId}/deposit`)
         .send({ amount: 10000 })
         .expect(200);
 
       // Set daily withdrawal limit
       await request(app.getHttpServer())
-        .put(`/wallet/${walletId}/daily-limit`)
+        .put(`/v1/wallet/${walletId}/daily-limit`)
         .send({ limit: 100, reason: 'Test limit' })
         .expect(200);
 
       // Try to withdraw more than daily limit
       const response = await request(app.getHttpServer())
-        .post(`/wallet/${walletId}/withdraw`)
+        .post(`/v1/wallet/${walletId}/withdraw`)
         .send({ amount: 150 })
         .expect(422);
 
@@ -122,10 +123,10 @@ describe('Exception Filters E2E Tests', () => {
   describe('Error Response Format', () => {
     it('should include error type in response', async () => {
       // Ensure wallet exists
-      await request(app.getHttpServer()).post('/wallet/test/deposit').send({ amount: 50 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/test/deposit').send({ amount: 50 }).expect(200);
 
       const response = await request(app.getHttpServer())
-        .post('/wallet/test/withdraw')
+        .post('/v1/wallet/test/withdraw')
         .send({ amount: 100 }) // Insufficient funds
         .expect(422);
 
@@ -137,10 +138,10 @@ describe('Exception Filters E2E Tests', () => {
 
     it('should not leak internal error details', async () => {
       // Ensure wallet exists
-      await request(app.getHttpServer()).post('/wallet/test/deposit').send({ amount: 50 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/test/deposit').send({ amount: 50 }).expect(200);
 
       const response = await request(app.getHttpServer())
-        .post('/wallet/test/withdraw')
+        .post('/v1/wallet/test/withdraw')
         .send({ amount: 100 }) // Insufficient funds
         .expect(422);
 
@@ -155,7 +156,7 @@ describe('Exception Filters E2E Tests', () => {
       // Trigger a non-domain error (e.g., database connection issue)
       // This is hard to test without mocking, but we can try malformed requests
       const response = await request(app.getHttpServer())
-        .post('/wallet/test/deposit')
+        .post('/v1/wallet/test/deposit')
         .send({ amount: 'not-a-number' }) // Will fail validation
         .expect(400); // BadRequest for validation errors
 

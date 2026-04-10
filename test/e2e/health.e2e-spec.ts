@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { AppModule } from '@src/app.module';
+import { configureTestApp } from '../shared/shared-test-app';
 
 
 describe('Health Endpoint E2E Tests', () => {
@@ -14,6 +15,7 @@ describe('Health Endpoint E2E Tests', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    configureTestApp(app);
     await app.init();
     
     // dataSource = moduleFixture.get<DataSource>(DataSource);
@@ -23,10 +25,10 @@ describe('Health Endpoint E2E Tests', () => {
     await app.close();
   });
 
-  describe('GET /health', () => {
+  describe('GET /v1/health', () => {
     it('should return 200 when all services are healthy', async () => {
       const response = await request(app.getHttpServer())
-        .get('/health')
+        .get('/v1/health')
         .expect(200);
 
       expect(response.body).toHaveProperty('status', 'ok');
@@ -37,7 +39,7 @@ describe('Health Endpoint E2E Tests', () => {
 
     it('should include database details in health check', async () => {
       const response = await request(app.getHttpServer())
-        .get('/health')
+        .get('/v1/health')
         .expect(200);
 
       expect(response.body.info.database).toMatchObject({
@@ -49,7 +51,7 @@ describe('Health Endpoint E2E Tests', () => {
       const start = Date.now();
       
       await request(app.getHttpServer())
-        .get('/health')
+        .get('/v1/health')
         .expect(200);
       
       const duration = Date.now() - start;
@@ -61,7 +63,7 @@ describe('Health Endpoint E2E Tests', () => {
     it('should handle concurrent health checks', async () => {
       const requests = Array(5).fill(null).map(() =>
         request(app.getHttpServer())
-          .get('/health')
+          .get('/v1/health')
           .expect(200)
       );
 

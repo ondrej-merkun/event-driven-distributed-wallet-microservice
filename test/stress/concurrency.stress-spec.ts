@@ -5,15 +5,15 @@ import { getSharedTestApp } from '../shared/shared-test-app';
 
 describe('Advanced Concurrency E2E Tests', () => {
   /**
-   * NOTE: Distinction from Load Tests (k6)
+   * NOTE: Distinction from Load Tests (Artillery/k6)
    *
    * This E2E test suite focuses on CORRECTNESS and DATA INTEGRITY under concurrency.
    * It verifies that race conditions, deadlocks, and idempotency logic are handled correctly
    * and that balances remain consistent (e.g., no double-spending).
    *
-   * In contrast, the k6 load tests (test/load-test.k6.js) focus on PERFORMANCE (latency, throughput)
-   * and STABILITY (resource exhaustion) under high load, but do not verify exact data consistency
-   * to the same degree of precision as these tests.
+   * In contrast, the load-test harnesses (test/load/load-test.yml and test/load-test.k6.js)
+   * focus on PERFORMANCE (latency, throughput) and STABILITY under high load, but do not
+   * verify exact data consistency to the same degree of precision as these tests.
    */
   jest.setTimeout(30000); // Reduced from 60000
   let app: INestApplication;
@@ -37,7 +37,7 @@ describe('Advanced Concurrency E2E Tests', () => {
     it('should prevent double execution when concurrent requests have same Request-ID', async () => {
       // Setup: Create wallet
       await request(app.getHttpServer())
-        .post('/wallet/idem-race/deposit')
+        .post('/v1/wallet/idem-race/deposit')
         .send({ amount: 100 })
         .expect(200);
 
@@ -49,7 +49,7 @@ describe('Advanced Concurrency E2E Tests', () => {
       for (let i = 0; i < concurrency; i++) {
         promises.push(
           request(app.getHttpServer())
-            .post('/wallet/idem-race/withdraw')
+            .post('/v1/wallet/idem-race/withdraw')
             .send({ amount: 10 })
             .set('x-request-id', requestId)
         );
@@ -75,7 +75,7 @@ describe('Advanced Concurrency E2E Tests', () => {
       // Verify balance
       // Only ONE withdrawal should have happened. Balance = 90.
       const balance = await request(app.getHttpServer())
-        .get('/wallet/idem-race')
+        .get('/v1/wallet/idem-race')
         .expect(200);
 
       expect(balance.body.balance).toBe(90);
@@ -85,8 +85,8 @@ describe('Advanced Concurrency E2E Tests', () => {
   describe('Transfer Deadlock', () => {
     it('should handle high concurrency bidirectional transfers without failing', async () => {
       // Setup Alice and Bob
-      await request(app.getHttpServer()).post('/wallet/alice-deadlock/deposit').send({ amount: 1000 }).expect(200);
-      await request(app.getHttpServer()).post('/wallet/bob-deadlock/deposit').send({ amount: 1000 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/alice-deadlock/deposit').send({ amount: 1000 }).expect(200);
+      await request(app.getHttpServer()).post('/v1/wallet/bob-deadlock/deposit').send({ amount: 1000 }).expect(200);
 
       const concurrency = 10; // Reduced from 50 for faster tests
       const promises = [];
@@ -96,13 +96,13 @@ describe('Advanced Concurrency E2E Tests', () => {
       for (let i = 0; i < concurrency; i++) {
         promises.push(
           request(app.getHttpServer())
-            .post('/wallet/alice-deadlock/transfer')
+            .post('/v1/wallet/alice-deadlock/transfer')
             .send({ toWalletId: 'bob-deadlock', amount: 1 })
             .set('x-request-id', `a-to-b-${i}`)
         );
         promises.push(
           request(app.getHttpServer())
-            .post('/wallet/bob-deadlock/transfer')
+            .post('/v1/wallet/bob-deadlock/transfer')
             .send({ toWalletId: 'alice-deadlock', amount: 1 })
             .set('x-request-id', `b-to-a-${i}`)
         );
@@ -125,8 +125,8 @@ describe('Advanced Concurrency E2E Tests', () => {
       // Verify final balances (should be 1000 if all succeeded, or consistent)
       // Alice: 1000 - 10 + 10 = 1000
       // Bob: 1000 + 10 - 10 = 1000
-      const alice = await request(app.getHttpServer()).get('/wallet/alice-deadlock').expect(200);
-      const bob = await request(app.getHttpServer()).get('/wallet/bob-deadlock').expect(200);
+      const alice = await request(app.getHttpServer()).get('/v1/wallet/alice-deadlock').expect(200);
+      const bob = await request(app.getHttpServer()).get('/v1/wallet/bob-deadlock').expect(200);
 
       // expect(alice.body.balance).toBe(1000);
       // expect(bob.body.balance).toBe(1000);
